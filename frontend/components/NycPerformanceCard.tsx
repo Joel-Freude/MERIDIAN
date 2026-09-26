@@ -13,6 +13,14 @@ interface Device {
   lat: number
   lng: number
   status: 'online' | 'warning' | 'offline'
+  security_score: number
+  last_vulnerability_scan: string | null
+  compliance_status: 'compliant' | 'non-compliant' | 'pending'
+  firmware_version: string
+  last_config_change: string | null
+  active_sessions: number
+  failed_logins: number
+  security_zone: 'trusted' | 'dmz' | 'untrusted'
 }
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'

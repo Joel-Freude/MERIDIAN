@@ -38,6 +38,24 @@ interface Device {
   lat: number;
   lng: number;
   status: 'online' | 'warning' | 'offline';
+  security_score: number;
+  last_vulnerability_scan: string | null;
+  compliance_status: 'compliant' | 'non-compliant' | 'pending';
+  firmware_version: string;
+  last_config_change: string | null;
+  active_sessions: number;
+  failed_logins: number;
+  security_zone: 'trusted' | 'dmz' | 'untrusted';
+}
+
+interface SecurityEvent {
+  id: string;
+  device_id: string;
+  event_type: 'brute_force' | 'port_scan' | 'config_change' | 'anomaly';
+  severity: 'critical' | 'high' | 'medium' | 'low';
+  timestamp: string;
+  description: string;
+  source_ip: string | null;
 }
 
 const STATUS_COLOR: Record<Device['status'], string> = {
@@ -46,25 +64,42 @@ const STATUS_COLOR: Record<Device['status'], string> = {
   offline: '#ff4757',
 };
 
+const SECURITY_SCORE_COLOR = (score: number): string => {
+  if (score >= 90) return '#00ff9d';
+  if (score >= 70) return '#ff9f43';
+  return '#ff4757';
+};
+
+const SECURITY_ZONE_COLOR: Record<Device['security_zone'], string> = {
+  trusted: 'rgba(0, 255, 157, 0.15)',
+  dmz: 'rgba(255, 159, 67, 0.15)',
+  untrusted: 'rgba(255, 71, 87, 0.15)',
+};
+
 const DEFAULT_DEVICES: Device[] = [
-  { id: 'dev-002', hostname: 'core-sw-nyc01', ip: '10.0.0.2', vendor: 'Juniper', model: 'QFX5120', site: 'New York DC', lat: 40.7128, lng: -74.006, status: 'online' },
-  { id: 'dev-004', hostname: 'fw-lon01', ip: '10.0.1.4', vendor: 'Fortinet', model: 'FortiGate 600E', site: 'London DC', lat: 51.5074, lng: -0.1278, status: 'online' },
-  { id: 'dev-012', hostname: 'core-sw-tky01', ip: '10.0.2.12', vendor: 'Cisco', model: 'Nexus 9300', site: 'Tokyo DC', lat: 35.6762, lng: 139.6503, status: 'online' },
-  { id: 'dev-016', hostname: 'core-sw-syd01', ip: '10.0.3.16', vendor: 'Arista', model: '7280R', site: 'Sydney DC', lat: -33.8688, lng: 151.2093, status: 'online' },
-  { id: 'dev-021', hostname: 'core-sw-par01', ip: '10.0.4.21', vendor: 'Cisco', model: 'Catalyst 9500', site: 'Paris DC', lat: 48.8566, lng: 2.3522, status: 'online' },
-  { id: 'dev-029', hostname: 'core-sw-ber01', ip: '10.0.5.29', vendor: 'Cisco', model: 'Nexus 9300', site: 'Berlin DC', lat: 52.52, lng: 13.405, status: 'online' },
+  { id: 'dev-002', hostname: 'core-sw-nyc01', ip: '10.0.0.2', vendor: 'Juniper', model: 'QFX5120', site: 'New York DC', lat: 40.7128, lng: -74.006, status: 'online', security_score: 95, last_vulnerability_scan: '2026-09-25T10:30:00Z', compliance_status: 'compliant', firmware_version: '20.4R1', last_config_change: '2026-09-20T14:22:00Z', active_sessions: 2, failed_logins: 0, security_zone: 'trusted' },
+  { id: 'dev-004', hostname: 'fw-lon01', ip: '10.0.1.4', vendor: 'Fortinet', model: 'FortiGate 600E', site: 'London DC', lat: 51.5074, lng: -0.1278, status: 'online', security_score: 78, last_vulnerability_scan: '2026-09-23T10:10:00Z', compliance_status: 'pending', firmware_version: '7.2.5', last_config_change: '2026-09-16T08:55:00Z', active_sessions: 4, failed_logins: 8, security_zone: 'dmz' },
+  { id: 'dev-012', hostname: 'core-sw-tky01', ip: '10.0.2.12', vendor: 'Cisco', model: 'Nexus 9300', site: 'Tokyo DC', lat: 35.6762, lng: 139.6503, status: 'online', security_score: 94, last_vulnerability_scan: '2026-09-25T08:00:00Z', compliance_status: 'compliant', firmware_version: '17.3.5', last_config_change: '2026-09-22T10:20:00Z', active_sessions: 2, failed_logins: 0, security_zone: 'trusted' },
+  { id: 'dev-016', hostname: 'core-sw-syd01', ip: '10.0.3.16', vendor: 'Arista', model: '7280R', site: 'Sydney DC', lat: -33.8688, lng: 151.2093, status: 'online', security_score: 93, last_vulnerability_scan: '2026-09-25T07:30:00Z', compliance_status: 'compliant', firmware_version: '4.29.1F', last_config_change: '2026-09-21T12:15:00Z', active_sessions: 3, failed_logins: 0, security_zone: 'trusted' },
+  { id: 'dev-021', hostname: 'core-sw-par01', ip: '10.0.4.21', vendor: 'Cisco', model: 'Catalyst 9500', site: 'Paris DC', lat: 48.8566, lng: 2.3522, status: 'online', security_score: 96, last_vulnerability_scan: '2026-09-25T09:45:00Z', compliance_status: 'compliant', firmware_version: '17.9.4a', last_config_change: '2026-09-22T14:10:00Z', active_sessions: 2, failed_logins: 0, security_zone: 'trusted' },
+  { id: 'dev-029', hostname: 'core-sw-ber01', ip: '10.0.5.29', vendor: 'Cisco', model: 'Nexus 9300', site: 'Berlin DC', lat: 52.52, lng: 13.405, status: 'online', security_score: 95, last_vulnerability_scan: '2026-09-25T08:30:00Z', compliance_status: 'compliant', firmware_version: '17.3.5', last_config_change: '2026-09-22T11:35:00Z', active_sessions: 2, failed_logins: 0, security_zone: 'trusted' },
+  { id: 'dev-003', hostname: 'fw-nyc01', ip: '10.0.0.3', vendor: 'Palo Alto', model: 'PA-5200', site: 'New York DC', lat: 40.7128, lng: -74.006, status: 'warning', security_score: 72, last_vulnerability_scan: '2026-09-23T16:30:00Z', compliance_status: 'non-compliant', firmware_version: '10.1.8', last_config_change: '2026-09-15T09:20:00Z', active_sessions: 5, failed_logins: 15, security_zone: 'dmz' },
 ];
 
 const DATA_CENTER_IDS = new Set(['dev-002', 'dev-006', 'dev-012', 'dev-016', 'dev-021', 'dev-029']);
 const CONNECTED_SITE_IDS = new Set(['dev-001', 'dev-003', 'dev-004', 'dev-005', 'dev-007', 'dev-008', 'dev-009', 'dev-010', 'dev-011', 'dev-013', 'dev-014', 'dev-015', 'dev-017', 'dev-018', 'dev-019', 'dev-020', 'dev-022', 'dev-023', 'dev-024', 'dev-025', 'dev-026', 'dev-027', 'dev-028', 'dev-030', 'dev-031', 'dev-032', 'dev-033', 'dev-034', 'dev-035', 'dev-036']);
 
-function devicesToGeoJSON(devices: Device[]): FeatureCollection<Point, Device> {
+function devicesToGeoJSON(devices: Device[]): FeatureCollection<Point, any> {
   return {
     type: 'FeatureCollection',
     features: devices.map((d) => ({
       type: 'Feature',
       geometry: { type: 'Point', coordinates: [d.lng, d.lat] },
-      properties: d,
+      properties: {
+        site: d.site,
+        security_score: d.security_score,
+        security_zone: d.security_zone,
+      },
     })),
   };
 }
@@ -150,6 +185,7 @@ interface GlobeMapProps {
   flyToLocation?: { lat: number; lng: number; site?: string } | null;
   selectedDevice?: Device | null;
   selectedSite?: string | null;
+  securityEvents?: SecurityEvent[];
 }
 
 export default function GlobeMap({
@@ -159,6 +195,7 @@ export default function GlobeMap({
   flyToLocation,
   selectedDevice,
   selectedSite,
+  securityEvents = [],
 }: GlobeMapProps) {
   const mapRef = useRef<MapRef>(null);
   const overlayRef = useRef<MapboxOverlay | null>(null);
@@ -240,15 +277,15 @@ export default function GlobeMap({
       if (typeof (map as any).easeTo === 'function') {
         (map as any).easeTo({
           center: nextCenter,
-          zoom: 3,
+          zoom: 2.8,
           bearing: 0,
           pitch: 0,
-          duration: 4000,
+          duration: 9000,
           essential: true,
         });
       } else {
         map.setCenter(nextCenter);
-        map.setZoom(3);
+        map.setZoom(2.8);
         map.setBearing(0);
         map.setPitch(0);
         cleanup();
@@ -279,7 +316,7 @@ export default function GlobeMap({
               zoom: 12,
               bearing: 0,
               pitch: 0,
-              duration: 3000,
+              duration: 9000,
               essential: true,
             });
           } else {
@@ -289,7 +326,7 @@ export default function GlobeMap({
             map.setPitch(0);
             handleStep2End();
           }
-        }, 2500);
+        }, 7500);
       };
 
       const handleStep2End = () => {
@@ -302,18 +339,18 @@ export default function GlobeMap({
               center: nextCenter,
               zoom: 18,
               bearing: 0,
-              pitch: 20,
-              duration: 4000,
+              pitch: 0,
+              duration: 8000,
               essential: true,
             });
           } else {
             map.setCenter(nextCenter);
-            map.setZoom(3);
+            map.setZoom(18);
             map.setBearing(0);
-            map.setPitch(20);
+            map.setPitch(0);
             handleFinalMoveEnd();
           }
-        }, 1500);
+        }, 7500);
       };
 
       map.on('moveend', handleStep1End);
@@ -321,14 +358,14 @@ export default function GlobeMap({
       if (typeof (map as any).easeTo === 'function') {
         (map as any).easeTo({
           center: [currentLng, currentLat],
-          zoom: 8,
+          zoom: 12,
           bearing: 0,
           pitch: 0,
-          duration: 4500,
+          duration: 9500,
           essential: true,
         });
       } else {
-        map.setZoom(3);
+        map.setZoom(12);
         handleStep1End();
       }
 
@@ -343,15 +380,15 @@ export default function GlobeMap({
     if (typeof (map as any).easeTo === 'function') {
       (map as any).easeTo({
         center: nextCenter,
-        zoom: 8,
+        zoom: 18,
         bearing: 0,
         pitch: 20,
-        duration: 4500,
+        duration: 6500,
         essential: true,
       });
     } else {
       map.setCenter(nextCenter);
-      map.setZoom(3);
+      map.setZoom(18);
       map.setBearing(0);
       map.setPitch(20);
       handleMoveEnd();
@@ -525,12 +562,91 @@ export default function GlobeMap({
                    14,
                    8,
                  ],
-                 'circle-color': '#00d4ff',
+                 'circle-color': [
+                   'case',
+                   ['>=', ['get', 'security_score'], 90],
+                   '#00ff9d',
+                   ['>=', ['get', 'security_score'], 70],
+                   '#ff9f43',
+                   '#ff4757',
+                 ],
                 'circle-stroke-width': 2,
                 'circle-stroke-color': '#0a0a0f',
                 'circle-opacity': 0.95,
               }}
             />
+            <Layer
+              id="devices-security-zone"
+              type="circle"
+              paint={{
+                'circle-radius': 25,
+                'circle-color': [
+                  'case',
+                  ['==', ['get', 'security_zone'], 'trusted'],
+                  'rgba(0, 255, 157, 0.1)',
+                  ['==', ['get', 'security_zone'], 'dmz'],
+                  'rgba(255, 159, 67, 0.1)',
+                  'rgba(255, 71, 87, 0.1)',
+                ],
+                'circle-stroke-width': 1,
+                'circle-stroke-color': [
+                  'case',
+                  ['==', ['get', 'security_zone'], 'trusted'],
+                  'rgba(0, 255, 157, 0.3)',
+                  ['==', ['get', 'security_zone'], 'dmz'],
+                  'rgba(255, 159, 67, 0.3)',
+                  'rgba(255, 71, 87, 0.3)',
+                ],
+                'circle-opacity': 0.8,
+              }}
+            />
+            {securityEvents.length > 0 && (() => {
+              const threatenedDevices = devices.filter(device => 
+                securityEvents.some(event => event.device_id === device.id)
+              );
+              const threatenedGeoJSON = {
+                type: 'FeatureCollection' as const,
+                features: threatenedDevices.map(device => {
+                  const deviceEvent = securityEvents.find(e => e.device_id === device.id);
+                  return {
+                    type: 'Feature' as const,
+                    geometry: { type: 'Point' as const, coordinates: [device.lng, device.lat] },
+                    properties: { 
+                      severity: deviceEvent?.severity || 'low'
+                    },
+                  };
+                }),
+              };
+              return (
+                <Source id="threat-devices" type="geojson" data={threatenedGeoJSON}>
+                  <Layer
+                    id="threat-indicators"
+                    type="circle"
+                    paint={{
+                      'circle-radius': 20,
+                      'circle-color': [
+                        'case',
+                        ['==', ['get', 'severity'], 'critical'],
+                        'rgba(255, 71, 87, 0.3)',
+                        ['==', ['get', 'severity'], 'high'],
+                        'rgba(255, 159, 67, 0.3)',
+                        'rgba(241, 196, 15, 0.3)',
+                      ],
+                      'circle-stroke-width': 2,
+                      'circle-stroke-color': [
+                        'case',
+                        ['==', ['get', 'severity'], 'critical'],
+                        '#ff4757',
+                        ['==', ['get', 'severity'], 'high'],
+                        '#ff9f43',
+                        '#f1c40f',
+                      ],
+                      'circle-opacity': 0.6,
+                    }}
+                  />
+                </Source>
+              );
+            })()}
            </Source>
             {selectedDevice && (
               <Source id="selected-device" type="geojson" data={{

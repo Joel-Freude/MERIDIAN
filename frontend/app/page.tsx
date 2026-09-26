@@ -6,9 +6,11 @@ import NycPerformanceCard from '@/components/NycPerformanceCard'
 import DeviceList from '@/components/DeviceList'
 import AddDatacenterModal from '@/components/AddDatacenterModal'
 import SplashScreen from '@/components/SplashScreen'
-import { Globe, Activity, Network, Settings, BarChart3, Shield, Radio, Layers, LayoutDashboard } from 'lucide-react'
+import SecurityDashboard from '@/components/SecurityDashboard'
+import VulnerabilityScanner from '@/components/VulnerabilityScanner'
+import { Globe, Activity, Network, Settings, BarChart3, Shield, Radio, Layers, LayoutDashboard, Lock } from 'lucide-react'
 
-type WidgetKey = 'dashboard' | 'network' | 'activity' | 'settings' | 'layers' | 'analytics' | 'threats' | 'live'
+type WidgetKey = 'dashboard' | 'network' | 'activity' | 'settings' | 'layers' | 'analytics' | 'threats' | 'live' | 'security'
 
 interface Device {
   id: string
@@ -20,6 +22,33 @@ interface Device {
   lat: number
   lng: number
   status: 'online' | 'warning' | 'offline'
+  security_score: number
+  last_vulnerability_scan: string | null
+  compliance_status: 'compliant' | 'non-compliant' | 'pending'
+  firmware_version: string
+  last_config_change: string | null
+  active_sessions: number
+  failed_logins: number
+  security_zone: 'trusted' | 'dmz' | 'untrusted'
+}
+
+interface Vulnerability {
+  cve_id: string
+  severity: 'critical' | 'high' | 'medium' | 'low'
+  description: string
+  affected_device_id: string
+  discovered_date: string
+  remediation_status: 'open' | 'in-progress' | 'resolved'
+}
+
+interface SecurityEvent {
+  id: string
+  device_id: string
+  event_type: 'brute_force' | 'port_scan' | 'config_change' | 'anomaly'
+  severity: 'critical' | 'high' | 'medium' | 'low'
+  timestamp: string
+  description: string
+  source_ip: string | null
 }
 
 const WIDGET_LABELS: Record<WidgetKey, string> = {
@@ -31,6 +60,7 @@ const WIDGET_LABELS: Record<WidgetKey, string> = {
   analytics: 'Analytics',
   threats: 'Threats',
   live: 'Live feeds',
+  security: 'Security',
 }
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
@@ -39,6 +69,18 @@ const STATUS_COLOR: Record<Device['status'], string> = {
   online: '#00ff9d',
   warning: '#ff9f43',
   offline: '#ff4757',
+}
+
+const SECURITY_SCORE_COLOR = (score: number): string => {
+  if (score >= 90) return '#00ff9d'
+  if (score >= 70) return '#ff9f43'
+  return '#ff4757'
+}
+
+const COMPLIANCE_COLOR: Record<Device['compliance_status'], string> = {
+  compliant: '#00ff9d',
+  'non-compliant': '#ff4757',
+  pending: '#ff9f43',
 }
 
 type TopologyType = 'star' | 'bus' | 'ring' | 'mesh' | 'tree' | 'hybrid'
@@ -62,7 +104,7 @@ const TOPOLOGY_LABELS: Record<TopologyType, string> = {
 }
 
 const LEFT_WIDGET_KEYS: WidgetKey[] = ['dashboard', 'network', 'activity', 'settings']
-const RIGHT_WIDGET_KEYS: WidgetKey[] = ['layers', 'analytics', 'threats', 'live']
+const RIGHT_WIDGET_KEYS: WidgetKey[] = ['layers', 'analytics', 'threats', 'live', 'security']
 
 export default function DashboardPage() {
   const [activeWidgets, setActiveWidgets] = useState<WidgetKey[]>(['dashboard'])
@@ -78,7 +120,7 @@ export default function DashboardPage() {
   const [statusFilter, setStatusFilter] = useState<'all' | 'online' | 'warning' | 'offline'>('all')
   const [selectedDevice, setSelectedDevice] = useState<Device | null>(null)
   const [selectedSiteForTopology, setSelectedSiteForTopology] = useState<string | null>(null)
-  const [showDeviceList, setShowDeviceList] = useState(false)
+  const [showDeviceList, setShowDeviceList] = useState(true)
   const deviceListVisibleItems = 4
   const [showNetworkModal, setShowNetworkModal] = useState(false)
   const [modalSelectedDevice, setModalSelectedDevice] = useState<Device | null>(null)
@@ -88,6 +130,11 @@ export default function DashboardPage() {
   const [activityFilter, setActivityFilter] = useState<'all' | 'high' | 'medium' | 'low'>('all')
   const [acknowledgedActivities, setAcknowledgedActivities] = useState<Set<string>>(new Set())
   const [deviceHealth, setDeviceHealth] = useState({ cpu: 50, ram: 50, upload: 50, download: 50, overall: 50 })
+  const [securityEvents, setSecurityEvents] = useState<SecurityEvent[]>([])
+  const [threatsLoading, setThreatsLoading] = useState(false)
+  const [threatsError, setThreatsError] = useState(false)
+  const [threatSeverityFilter, setThreatSeverityFilter] = useState<'all' | 'critical' | 'high' | 'medium' | 'low'>('all')
+  const [acknowledgedThreats, setAcknowledgedThreats] = useState<Set<string>>(new Set())
 
   useEffect(() => {
     const saved = localStorage.getItem('activeWidgets')
@@ -130,6 +177,30 @@ export default function DashboardPage() {
         if (!cancelled) {
           setDevicesError(true)
           setDevicesLoading(false)
+        }
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [activeWidgets])
+
+  useEffect(() => {
+    if (!activeWidgets.includes('threats')) return
+    let cancelled = false
+    setThreatsLoading(true)
+    setThreatsError(false)
+    fetch(`${API_URL}/api/security/events`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (!cancelled) {
+          setSecurityEvents(data.events ?? [])
+          setThreatsLoading(false)
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setThreatsError(true)
+          setThreatsLoading(false)
         }
       })
     return () => {
@@ -234,7 +305,7 @@ export default function DashboardPage() {
 
     const deviceIcon = (x: number, y: number, device: Device) => {
       const type = getDeviceType(device)
-      const fill = STATUS_COLOR[device.status]
+      const fill = SECURITY_SCORE_COLOR(device.security_score)
       if (type === 'switch') {
         return (
           <g key={device.id}>
@@ -286,6 +357,10 @@ export default function DashboardPage() {
     const commonNode = (x: number, y: number, device: Device) => (
       <g onClick={() => onNodeClick?.(device)} style={{ cursor: 'pointer' }}>
         {deviceIcon(x, y, device)}
+        <circle cx={x + 8} cy={y - 8} r="6" fill={SECURITY_SCORE_COLOR(device.security_score)} stroke="#0a0a0f" strokeWidth="1" />
+        <text x={x + 8} y={y - 7} textAnchor="middle" fill="#0a0a0f" fontSize="6" fontWeight="bold" style={{ fontFamily: 'var(--font-data)' }}>
+          {device.security_score}
+        </text>
         <text x={x} y={y + 16} textAnchor="middle" fill="#9ca3af" fontSize="7" style={{ fontFamily: 'var(--font-data)' }}>
           {device.hostname}
         </text>
@@ -626,6 +701,7 @@ export default function DashboardPage() {
           ['analytics', 'analytics', BarChart3],
           ['threats', 'threats', Shield],
           ['live', 'live', Radio],
+          ['security', 'security', Lock],
         ] as const).map(([pageKey, widgetKey, Icon]) => {
           const active = isActive(widgetKey)
           return (
@@ -654,7 +730,12 @@ export default function DashboardPage() {
 
       {/* Main content */}
       <main className="flex-1 relative overflow-hidden">
-        <GlobeMap flyToLocation={flyToLocation} selectedDevice={selectedDevice} selectedSite={selectedSite} />
+        <GlobeMap 
+          flyToLocation={flyToLocation} 
+          selectedDevice={selectedDevice} 
+          selectedSite={selectedSite}
+          securityEvents={securityEvents}
+        />
 
         {isActive('dashboard') && (
           <>
@@ -757,94 +838,96 @@ export default function DashboardPage() {
                       )}
                    </svg>
                  </div>
-                <button
-                   onClick={() => {
-                     setModalSelectedDevice(null)
-                     setShowNetworkModal(true)
-                   }}
-                  className="w-full rounded border border-cyan-500/20 px-3 py-2 text-xs text-cyan-300 hover:bg-cyan-500/10"
-                  style={{ fontFamily: 'var(--font-data)' }}
-                >
-                  ORGANIZE NETWORK
-                 </button>
-                </div>
+                 <button
+                    onClick={() => {
+                      setModalSelectedDevice(null)
+                      setShowNetworkModal(true)
+                    }}
+                   className="w-full rounded border border-cyan-500/20 px-3 py-2 text-xs text-cyan-300 hover:bg-cyan-500/10"
+                   style={{ fontFamily: 'var(--font-data)' }}
+                 >
+                   ORGANIZE NETWORK
+                  </button>
+                 </div>
 
-                {selectedDevice && (
-                  <div className="hud-panel border border-cyan-500/30 rounded-lg p-4">
-                    <div className="text-xs font-semibold text-cyan-300 mb-3" style={{ fontFamily: 'var(--font-data)' }}>
-                      DEVICE PERFORMANCE
-                    </div>
-                    <div className="flex items-center gap-4">
-                      <div className="flex-shrink-0">
-                        <svg width="80" height="80" viewBox="0 0 80 80">
-                          <circle cx="40" cy="40" r="32" fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="6" />
-                          <circle
-                            cx="40"
-                            cy="40"
-                            r="32"
-                            fill="none"
-                            stroke="#00d4ff"
-                            strokeWidth="6"
-                            strokeDasharray={`${(deviceHealth.overall / 100) * 201} 201`}
-                            transform="rotate(-90 40 40)"
-                            strokeLinecap="round"
-                          />
-                          <text x="40" y="40" textAnchor="middle" dy="0.35em" fill="#e8e6de" fontSize="16" fontWeight="700" fontFamily="var(--font-data)">
-                            {Math.round(deviceHealth.overall)}%
-                          </text>
-                        </svg>
+                  {selectedDevice && (
+                    <div className="hud-panel border border-cyan-500/30 rounded-lg p-4" style={{ maxHeight: '320px', display: 'flex', flexDirection: 'column' }}>
+                      <div className="text-xs font-semibold text-cyan-300 mb-3" style={{ fontFamily: 'var(--font-data)' }}>
+                        DEVICE PERFORMANCE
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <div className="text-sm font-semibold text-gray-200 truncate" style={{ fontFamily: 'var(--font-data)' }}>
-                          {selectedDevice.hostname}
-                        </div>
-                        <div className="text-[10px] text-gray-500" style={{ fontFamily: 'var(--font-data)' }}>
-                          {selectedDevice.site}
-                        </div>
-                        <div className="mt-3 space-y-2">
-                          <div>
-                            <div className="flex items-center justify-between text-[10px] mb-1" style={{ fontFamily: 'var(--font-data)' }}>
-                              <span className="text-gray-500">CPU</span>
-                              <span className="text-gray-300">{Math.round(deviceHealth.cpu)}%</span>
+                      <div className="overflow-y-auto performance-scroll pr-1" style={{ maxHeight: '260px' }}>
+                        <div className="flex items-center gap-4">
+                          <div className="flex-shrink-0">
+                            <svg width="80" height="80" viewBox="0 0 80 80">
+                              <circle cx="40" cy="40" r="32" fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="6" />
+                              <circle
+                                cx="40"
+                                cy="40"
+                                r="32"
+                                fill="none"
+                                stroke="#00d4ff"
+                                strokeWidth="6"
+                                strokeDasharray={`${(deviceHealth.overall / 100) * 201} 201`}
+                                transform="rotate(-90 40 40)"
+                                strokeLinecap="round"
+                              />
+                              <text x="40" y="40" textAnchor="middle" dy="0.35em" fill="#e8e6de" fontSize="16" fontWeight="700" fontFamily="var(--font-data)">
+                                {Math.round(deviceHealth.overall)}%
+                              </text>
+                            </svg>
+                          </div>
+                          <div className="flex-1 min-w-0">
+                            <div className="text-sm font-semibold text-gray-200 truncate" style={{ fontFamily: 'var(--font-data)' }}>
+                              {selectedDevice.hostname}
                             </div>
-                            <div className="h-1 bg-cyan-500/10 rounded overflow-hidden">
-                              <div className="h-full rounded bg-cyan-400 transition-all" style={{ width: `${deviceHealth.cpu}%` }} />
+                            <div className="text-[10px] text-gray-500" style={{ fontFamily: 'var(--font-data)' }}>
+                              {selectedDevice.site}
+                            </div>
+                            <div className="mt-3 space-y-2">
+                              <div>
+                                <div className="flex items-center justify-between text-[10px] mb-1" style={{ fontFamily: 'var(--font-data)' }}>
+                                  <span className="text-gray-500">CPU</span>
+                                  <span className="text-gray-300">{Math.round(deviceHealth.cpu)}%</span>
+                                </div>
+                                <div className="h-1 bg-cyan-500/10 rounded overflow-hidden">
+                                  <div className="h-full rounded bg-cyan-400 transition-all" style={{ width: `${deviceHealth.cpu}%` }} />
+                                </div>
+                              </div>
+                              <div>
+                                <div className="flex items-center justify-between text-[10px] mb-1" style={{ fontFamily: 'var(--font-data)' }}>
+                                  <span className="text-gray-500">RAM</span>
+                                  <span className="text-gray-300">{Math.round(deviceHealth.ram)}%</span>
+                                </div>
+                                <div className="h-1 bg-cyan-500/10 rounded overflow-hidden">
+                                  <div className="h-full rounded bg-cyan-400 transition-all" style={{ width: `${deviceHealth.ram}%` }} />
+                                </div>
+                              </div>
+                              <div>
+                                <div className="flex items-center justify-between text-[10px] mb-1" style={{ fontFamily: 'var(--font-data)' }}>
+                                  <span className="text-gray-500">UPLOAD</span>
+                                  <span className="text-gray-300">{Math.round(deviceHealth.upload)}%</span>
+                                </div>
+                                <div className="h-1 bg-cyan-500/10 rounded overflow-hidden">
+                                  <div className="h-full rounded bg-cyan-400 transition-all" style={{ width: `${deviceHealth.upload}%` }} />
+                                </div>
+                              </div>
+                              <div>
+                                <div className="flex items-center justify-between text-[10px] mb-1" style={{ fontFamily: 'var(--font-data)' }}>
+                                  <span className="text-gray-500">DOWNLOAD</span>
+                                  <span className="text-gray-300">{Math.round(deviceHealth.download)}%</span>
+                                </div>
+                                <div className="h-1 bg-cyan-500/10 rounded overflow-hidden">
+                                  <div className="h-full rounded bg-cyan-400 transition-all" style={{ width: `${deviceHealth.download}%` }} />
+                                </div>
+                              </div>
                             </div>
                           </div>
-                          <div>
-                            <div className="flex items-center justify-between text-[10px] mb-1" style={{ fontFamily: 'var(--font-data)' }}>
-                              <span className="text-gray-500">RAM</span>
-                              <span className="text-gray-300">{Math.round(deviceHealth.ram)}%</span>
-                            </div>
-                            <div className="h-1 bg-cyan-500/10 rounded overflow-hidden">
-                              <div className="h-full rounded bg-cyan-400 transition-all" style={{ width: `${deviceHealth.ram}%` }} />
-                            </div>
-                          </div>
-                           <div>
-                             <div className="flex items-center justify-between text-[10px] mb-1" style={{ fontFamily: 'var(--font-data)' }}>
-                               <span className="text-gray-500">UPLOAD</span>
-                               <span className="text-gray-300">{Math.round(deviceHealth.upload)}%</span>
-                             </div>
-                             <div className="h-1 bg-cyan-500/10 rounded overflow-hidden">
-                               <div className="h-full rounded bg-cyan-400 transition-all" style={{ width: `${deviceHealth.upload}%` }} />
-                             </div>
-                           </div>
-                           <div>
-                             <div className="flex items-center justify-between text-[10px] mb-1" style={{ fontFamily: 'var(--font-data)' }}>
-                               <span className="text-gray-500">DOWNLOAD</span>
-                               <span className="text-gray-300">{Math.round(deviceHealth.download)}%</span>
-                             </div>
-                             <div className="h-1 bg-cyan-500/10 rounded overflow-hidden">
-                               <div className="h-full rounded bg-cyan-400 transition-all" style={{ width: `${deviceHealth.download}%` }} />
-                             </div>
-                           </div>
                         </div>
                       </div>
                     </div>
-                  </div>
-                )}
+                  )}
 
-                {showDeviceList && (
+                 {showDeviceList && (
                  <div key={activeSite ?? 'all'} className="hud-panel rounded-lg p-4">
                    <div className="text-xs font-semibold text-cyan-300 mb-3" style={{ fontFamily: 'var(--font-data)' }}>
                      DEVICES — {activeSite ?? 'ALL SITES'}
@@ -881,20 +964,44 @@ export default function DashboardPage() {
                                  <span className="text-xs text-gray-200" style={{ fontFamily: 'var(--font-data)' }}>
                                    {device.hostname}
                                  </span>
-                                 <span
-                                   className="text-[10px] font-semibold px-2 py-0.5 rounded"
-                                   style={{
-                                     fontFamily: 'var(--font-data)',
-                                     backgroundColor: `${STATUS_COLOR[device.status]}20`,
-                                     color: STATUS_COLOR[device.status],
-                                   }}
-                                 >
-                                   {device.status.toUpperCase()}
-                                 </span>
+                                 <div className="flex items-center gap-2">
+                                   <span
+                                     className="text-[10px] font-semibold px-2 py-0.5 rounded"
+                                     style={{
+                                       fontFamily: 'var(--font-data)',
+                                       backgroundColor: `${STATUS_COLOR[device.status]}20`,
+                                       color: STATUS_COLOR[device.status],
+                                     }}
+                                   >
+                                     {device.status.toUpperCase()}
+                                   </span>
+                                   <span
+                                     className="text-[10px] font-bold px-2 py-0.5 rounded"
+                                     style={{
+                                       fontFamily: 'var(--font-data)',
+                                       backgroundColor: `${SECURITY_SCORE_COLOR(device.security_score)}20`,
+                                       color: SECURITY_SCORE_COLOR(device.security_score),
+                                     }}
+                                   >
+                                     {device.security_score}
+                                   </span>
+                                 </div>
                                </div>
                                <div className="mt-1 flex items-center justify-between text-[10px] text-gray-500" style={{ fontFamily: 'var(--font-data)' }}>
                                  <span>{device.ip}</span>
-                                 <span>{device.site}</span>
+                                 <div className="flex items-center gap-2">
+                                   <span>{device.site}</span>
+                                   <span
+                                     className="text-[10px] px-1 py-0.5 rounded border"
+                                     style={{
+                                       fontFamily: 'var(--font-data)',
+                                       borderColor: COMPLIANCE_COLOR[device.compliance_status],
+                                       color: COMPLIANCE_COLOR[device.compliance_status],
+                                     }}
+                                   >
+                                     {device.compliance_status.toUpperCase()}
+                                   </span>
+                                 </div>
                                </div>
                              </button>
                            )
@@ -961,6 +1068,44 @@ export default function DashboardPage() {
                   </div>
                   <div className="mt-4 border-t border-cyan-500/10 pt-3">
                     <div className="text-[10px] text-gray-500 mb-2" style={{ fontFamily: 'var(--font-data)' }}>
+                      SECURITY
+                    </div>
+                    <div className="space-y-2">
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-500">SECURITY SCORE</span>
+                        <span className="font-semibold" style={{ color: SECURITY_SCORE_COLOR(selectedDevice.security_score) }}>
+                          {selectedDevice.security_score}/100
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-500">COMPLIANCE</span>
+                        <span
+                          className="font-semibold"
+                          style={{ color: COMPLIANCE_COLOR[selectedDevice.compliance_status] }}
+                        >
+                          {selectedDevice.compliance_status.toUpperCase()}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-500">SECURITY ZONE</span>
+                        <span className="text-gray-200">{selectedDevice.security_zone.toUpperCase()}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-500">FIRMWARE</span>
+                        <span className="text-gray-200">{selectedDevice.firmware_version}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-500">ACTIVE SESSIONS</span>
+                        <span className="text-gray-200">{selectedDevice.active_sessions}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-500">FAILED LOGINS</span>
+                        <span className="text-gray-200">{selectedDevice.failed_logins}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="mt-4 border-t border-cyan-500/10 pt-3">
+                    <div className="text-[10px] text-gray-500 mb-2" style={{ fontFamily: 'var(--font-data)' }}>
                       INTERFACES
                     </div>
                     <div className="space-y-1">
@@ -971,6 +1116,12 @@ export default function DashboardPage() {
                         </div>
                       ))}
                     </div>
+                  </div>
+                  <div className="mt-4 border-t border-cyan-500/10 pt-3">
+                    <div className="text-[10px] text-gray-500 mb-2" style={{ fontFamily: 'var(--font-data)' }}>
+                      VULNERABILITY SCANNER
+                    </div>
+                    <VulnerabilityScanner deviceId={selectedDevice.id} />
                   </div>
                 </div>
               </div>
@@ -1148,22 +1299,100 @@ export default function DashboardPage() {
               <h3 className="text-sm font-bold text-cyan-400 tracking-wider">THREATS</h3>
               <button onClick={() => toggleWidget('threats')} className="text-[10px] text-gray-400 hover:text-white">CLOSE</button>
             </div>
-            <div className="space-y-2">
-              {[
-                { title: 'Brute force', severity: 'high' },
-                { title: 'Port scan', severity: 'medium' },
-                { title: 'Anomaly', severity: 'low' },
-                { title: 'Malware sig', severity: 'medium' },
-              ].map((threat) => (
-                <div key={threat.title} className="flex items-center justify-between rounded border border-cyan-500/10 px-3 py-2">
-                  <span className="text-xs text-white">{threat.title}</span>
-                  <span className={`text-[10px] font-bold uppercase ${
-                    threat.severity === 'high' ? 'text-red-400' :
-                    threat.severity === 'medium' ? 'text-orange-400' : 'text-green-400'
-                  }`}>{threat.severity}</span>
-                </div>
+            <div className="flex items-center gap-2 mb-3">
+              {(['all', 'critical', 'high', 'medium', 'low'] as const).map((severity) => (
+                <button
+                  key={severity}
+                  onClick={() => setThreatSeverityFilter(severity)}
+                  className={`px-2 py-1 rounded border text-[10px] transition-colors ${
+                    threatSeverityFilter === severity
+                      ? 'border-cyan-400/60 text-cyan-300 bg-cyan-500/10'
+                      : 'border-cyan-500/10 text-gray-400 hover:text-white'
+                  }`}
+                  style={{ fontFamily: 'var(--font-data)' }}
+                >
+                  {severity.toUpperCase()}
+                </button>
               ))}
             </div>
+            <div className="max-h-[200px] overflow-y-auto space-y-2 pr-1 performance-scroll">
+              {threatsLoading && (
+                <div className="flex flex-col gap-2">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="flex items-center gap-3 animate-pulse">
+                      <div className="h-4 w-24 bg-cyan-500/10 rounded" />
+                      <div className="h-3 w-16 bg-cyan-500/10 rounded" />
+                    </div>
+                  ))}
+                </div>
+              )}
+              {threatsError && (
+                <div className="text-xs text-red-400">Failed to load threats</div>
+              )}
+              {!threatsLoading && !threatsError && (
+                <>
+                  {securityEvents
+                    .filter((event) => threatSeverityFilter === 'all' || event.severity === threatSeverityFilter)
+                    .map((event) => {
+                      const isAcknowledged = acknowledgedThreats.has(event.id)
+                      return (
+                        <div
+                          key={event.id}
+                          className={`flex items-start justify-between gap-3 rounded border px-3 py-2 transition-colors ${
+                            isAcknowledged ? 'border-cyan-500/10 opacity-60' : 'border-cyan-500/20'
+                          }`}
+                        >
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2 mb-1">
+                              <span
+                                className="text-[10px] font-semibold px-2 py-0.5 rounded"
+                                style={{
+                                  fontFamily: 'var(--font-data)',
+                                  backgroundColor: event.severity === 'critical' ? '#ff475720' : event.severity === 'high' ? '#ff9f4320' : event.severity === 'medium' ? '#f1c40f20' : '#00ff9d20',
+                                  color: event.severity === 'critical' ? '#ff4757' : event.severity === 'high' ? '#ff9f43' : event.severity === 'medium' ? '#f1c40f' : '#00ff9d',
+                                }}
+                              >
+                                {event.severity.toUpperCase()}
+                              </span>
+                              <span className="text-[10px] text-gray-500" style={{ fontFamily: 'var(--font-data)' }}>
+                                {new Date(event.timestamp).toLocaleTimeString()}
+                              </span>
+                            </div>
+                            <div className="text-xs text-gray-200 mb-1" style={{ fontFamily: 'var(--font-data)' }}>
+                              {event.description}
+                            </div>
+                            <div className="flex items-center gap-2 text-[10px] text-gray-500" style={{ fontFamily: 'var(--font-data)' }}>
+                              <span>{event.device_id}</span>
+                              {event.source_ip && <span>• {event.source_ip}</span>}
+                            </div>
+                          </div>
+                          {!isAcknowledged && (
+                            <button
+                              onClick={() => setAcknowledgedThreats((prev) => new Set(prev).add(event.id))}
+                              className="text-[10px] text-cyan-300 hover:text-white whitespace-nowrap"
+                              style={{ fontFamily: 'var(--font-data)' }}
+                            >
+                              ACK
+                            </button>
+                          )}
+                        </div>
+                      )
+                    })}
+                  {securityEvents.filter((event) => threatSeverityFilter === 'all' || event.severity === threatSeverityFilter).length === 0 && (
+                    <div className="text-xs text-gray-500 text-center py-4" style={{ fontFamily: 'var(--font-data)' }}>
+                      No threats found
+                    </div>
+                  )}
+                </>
+              )}
+            </div>
+            <button
+              onClick={() => setAcknowledgedThreats(new Set())}
+              className="mt-3 w-full rounded border border-cyan-500/20 px-3 py-2 text-xs text-cyan-300 hover:bg-cyan-500/10"
+              style={{ fontFamily: 'var(--font-data)' }}
+            >
+              CLEAR ACKNOWLEDGED
+            </button>
           </div>
         </div>
 
@@ -1188,6 +1417,11 @@ export default function DashboardPage() {
               ))}
             </div>
           </div>
+        </div>
+
+        <div className={`absolute right-4 top-24 z-30 w-80 right-widget-panel ${isActive('security') ? 'is-active' : ''}`}>
+          <div className="absolute -inset-4" onClick={() => toggleWidget('security')} />
+          <SecurityDashboard onClose={() => toggleWidget('security')} />
         </div>
       </main>
 
@@ -1331,6 +1565,31 @@ export default function DashboardPage() {
                           {modalSelectedDevice.status.toUpperCase()}
                         </span>
                       </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-500">SECURITY SCORE</span>
+                        <span className="font-semibold" style={{ color: SECURITY_SCORE_COLOR(modalSelectedDevice.security_score) }}>
+                          {modalSelectedDevice.security_score}/100
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-500">COMPLIANCE</span>
+                        <span
+                          className="font-semibold"
+                          style={{ color: COMPLIANCE_COLOR[modalSelectedDevice.compliance_status] }}
+                        >
+                          {modalSelectedDevice.compliance_status.toUpperCase()}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-500">SECURITY ZONE</span>
+                        <span className="text-gray-200">{modalSelectedDevice.security_zone.toUpperCase()}</span>
+                      </div>
+                    </div>
+                    <div className="mt-4 border-t border-cyan-500/10 pt-3">
+                      <div className="text-[10px] text-gray-500 mb-2" style={{ fontFamily: 'var(--font-data)' }}>
+                        VULNERABILITY SCANNER
+                      </div>
+                      <VulnerabilityScanner deviceId={modalSelectedDevice.id} />
                     </div>
                     <div className="flex items-center gap-2 mt-6">
                       <button className="flex-1 rounded border border-cyan-500/20 px-3 py-2 text-xs text-cyan-300 hover:bg-cyan-500/10" style={{ fontFamily: 'var(--font-data)' }}>
