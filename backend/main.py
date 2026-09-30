@@ -5,6 +5,7 @@ from typing import Literal
 import random
 import os
 import httpx
+import asyncio
 from datetime import datetime
 from dotenv import load_dotenv
 
@@ -169,6 +170,33 @@ async def geocode(q: str):
         return {"error": str(exc), "features": []}
 
 
+class CreateDeviceRequest(BaseModel):
+    hostname: str
+    ip: str
+    vendor: str
+    model: str
+    site: str
+    lat: float
+    lng: float
+    status: Literal["online", "warning", "offline"] = "online"
+    security_score: int = 100
+    last_vulnerability_scan: str | None = None
+    compliance_status: Literal["compliant", "non-compliant", "pending"] = "pending"
+    firmware_version: str = "unknown"
+    last_config_change: str | None = None
+    active_sessions: int = 0
+    failed_logins: int = 0
+    security_zone: Literal["trusted", "dmz", "untrusted"] = "trusted"
+
+
+@app.post("/api/devices")
+async def create_device(request: CreateDeviceRequest):
+    new_id = f"dev-{len(DEVICES) + 1:03d}"
+    device = Device(id=new_id, **request.model_dump())
+    DEVICES.append(device)
+    return device.model_dump()
+
+
 @app.get("/api/security/vulnerabilities")
 async def get_vulnerabilities(device_id: str | None = None):
     filtered = VULNERABILITIES if device_id is None else [v for v in VULNERABILITIES if v.affected_device_id == device_id]
@@ -312,19 +340,16 @@ async def trigger_scan(request: ScanRequest):
     
     SCAN_PROGRESS[scan_id] = progress
     
-    # Simulate scan progress (in real implementation, this would be async)
     async def simulate_scan():
         for i in range(1, 101):
-            await asyncio.sleep(0.05)  # Simulate scan time
+            await asyncio.sleep(0.05)
             if scan_id in SCAN_PROGRESS:
                 SCAN_PROGRESS[scan_id].progress = i
                 if i == 100:
                     SCAN_PROGRESS[scan_id].status = "completed"
                     SCAN_PROGRESS[scan_id].end_time = datetime.now().isoformat()
-                    # Random vulnerabilities found
                     SCAN_PROGRESS[scan_id].vulnerabilities_found = random.randint(0, 3)
     
-    import asyncio
     asyncio.create_task(simulate_scan())
     
     return {
@@ -359,4 +384,4 @@ async def update_remediation(vulnerability_id: str, update: dict):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000)
+    uvicorn.run(app, host="0.0.0.0", port=8001)

@@ -4,10 +4,8 @@ An enterprise-grade, single-source-of-truth web application designed for Network
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Python](https://img.shields.io/badge/Python-3.11%2B-blue)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.110.0-009688)
-![Next.js](https://img.shields.io/badge/Next.js-14.1.3-black)
-![PostgreSQL](https://img.shields.io/badge/PostgreSQL-16-336791)
-![Docker](https://img.shields.io/badge/Docker-WSL2-2496ED)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.111.0-009688)
+![Next.js](https://img.shields.io/badge/Next.js-16.3.5-black)
 
 ---
 
@@ -25,19 +23,20 @@ An enterprise-grade, single-source-of-truth web application designed for Network
 
 ## Tech Stack & Architecture
 
-* **Frontend:** Next.js 14+ (App Router), React, Tailwind CSS, Lucide Icons[cite: 1].
-* **Backend:** FastAPI, Pydantic v2, SQLAlchemy 2.0 ORM[cite: 1].
-* **Database:** PostgreSQL 16 (Utilizing native `INET` and `MACADDR` column types)[cite: 1].
-* **Infrastructure:** Docker Desktop & WSL2 Ubuntu[cite: 1].
+* **Frontend:** Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS, Lucide Icons[cite: 1].
+* **Backend:** FastAPI, Pydantic v2, in-memory data store[cite: 1].
+* **Mapping:** MapLibre GL JS, deck.gl for 3D globe and arc visualization[cite: 1].
 
 ---
 
-## Database Schema Overview
+## Data Model Overview
 
-The application utilizes a relational schema to link network devices to physical site locations[cite: 1]:
+The application uses Pydantic models to represent network inventory data[cite: 1]:
 
-* **`devices`**: Stores `hostname`, `ip_address`, `mac_address`, `device_type`, `vendor`, `model`, `serial_number`, `firmware_version`, `status`, and `location_id`[cite: 1].
-* **`locations`**: Stores `site_name`, `building_rack`, and `description`[cite: 1].
+* **`Device`**: Stores `hostname`, `ip`, `vendor`, `model`, `site`, `lat`, `lng`, `status`, `security_score`, `compliance_status`, `firmware_version`, `security_zone`, and related telemetry[cite: 1].
+* **`Vulnerability`**: Stores `cve_id`, `severity`, `description`, `affected_device_id`, `discovered_date`, `remediation_status`[cite: 1].
+* **`SecurityEvent`**: Stores `event_type`, `severity`, `timestamp`, `description`, `source_ip`[cite: 1].
+* **`ScanProgress`**: Tracks vulnerability scan progress by `scan_id`[cite: 1].
 
 ---
 
@@ -77,25 +76,35 @@ This repository strictly adheres to a structured development methodology[cite: 1
 ## Getting Started (Local Development)
 
 ### Prerequisites
-* Windows 11 with **WSL2** (Ubuntu) installed
-* **Docker Desktop** configured with WSL2 integration
+* **Python 3.11+**
+* **Node.js 18+** and npm
 
 ### Installation
+
 1. Clone the repository:
     ```bash
-    git clone [https://github.com/Joel-Freude/Network-Device-Inventory-Manager.git](https://github.com/Joel-Freude/Network-Device-Inventory-Manager.git)
+    git clone https://github.com/Joel-Freude/Network-Device-Inventory-Manager.git
     cd Network-Device-Inventory-Manager
-    
-2. Start the application stack using Docker Compose:
+    ```
 
-```bash
-docker compose up --build -d```
+2. Start the backend server:
+    ```bash
+    cd backend
+    pip install -r requirements.txt
+    uvicorn main:app --reload
+    ```
 
-3. Access the application services:
+3. In a new terminal, start the frontend development server:
+    ```bash
+    cd frontend
+    npm install
+    npm run dev
+    ```
+
+4. Access the application services:
 
 * Frontend Dashboard: http://localhost:3000
 * FastAPI Interactive Docs (Swagger): http://localhost:8000/docs
-* PostgreSQL Engine: localhost:5432
 
 4. License
 * **Distributed under the MIT License.** 

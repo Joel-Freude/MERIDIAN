@@ -23,7 +23,7 @@ const SATELLITE_STYLE: any = {
   layers: [{ id: 'esri-imagery', type: 'raster', source: 'esri' }],
 };
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000';
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8001';
 
 type BaseStyle = 'map' | 'sat';
 type ProjectionMode = 'globe' | 'mercator';
@@ -86,8 +86,8 @@ const DEFAULT_DEVICES: Device[] = [
   { id: 'dev-003', hostname: 'fw-nyc01', ip: '10.0.0.3', vendor: 'Palo Alto', model: 'PA-5200', site: 'New York DC', lat: 40.7128, lng: -74.006, status: 'warning', security_score: 72, last_vulnerability_scan: '2026-09-23T16:30:00Z', compliance_status: 'non-compliant', firmware_version: '10.1.8', last_config_change: '2026-09-15T09:20:00Z', active_sessions: 5, failed_logins: 15, security_zone: 'dmz' },
 ];
 
-const DATA_CENTER_IDS = new Set(['dev-002', 'dev-006', 'dev-012', 'dev-016', 'dev-021', 'dev-029']);
-const CONNECTED_SITE_IDS = new Set(['dev-001', 'dev-003', 'dev-004', 'dev-005', 'dev-007', 'dev-008', 'dev-009', 'dev-010', 'dev-011', 'dev-013', 'dev-014', 'dev-015', 'dev-017', 'dev-018', 'dev-019', 'dev-020', 'dev-022', 'dev-023', 'dev-024', 'dev-025', 'dev-026', 'dev-027', 'dev-028', 'dev-030', 'dev-031', 'dev-032', 'dev-033', 'dev-034', 'dev-035', 'dev-036']);
+const DATA_CENTER_IDS = new Set(['dev-001', 'dev-006', 'dev-012', 'dev-016', 'dev-021', 'dev-029']);
+const CONNECTED_SITE_IDS = new Set(['dev-002', 'dev-003', 'dev-004', 'dev-005', 'dev-007', 'dev-008', 'dev-009', 'dev-010', 'dev-011', 'dev-013', 'dev-014', 'dev-015', 'dev-017', 'dev-018', 'dev-019', 'dev-020', 'dev-022', 'dev-023', 'dev-024', 'dev-025', 'dev-026', 'dev-027', 'dev-028', 'dev-030', 'dev-031', 'dev-032', 'dev-033', 'dev-034', 'dev-035', 'dev-036']);
 
 function devicesToGeoJSON(devices: Device[]): FeatureCollection<Point, any> {
   return {
@@ -600,54 +600,7 @@ export default function GlobeMap({
                 'circle-opacity': 0.8,
               }}
             />
-            {securityEvents.length > 0 && (() => {
-              const threatenedDevices = devices.filter(device => 
-                securityEvents.some(event => event.device_id === device.id)
-              );
-              const threatenedGeoJSON = {
-                type: 'FeatureCollection' as const,
-                features: threatenedDevices.map(device => {
-                  const deviceEvent = securityEvents.find(e => e.device_id === device.id);
-                  return {
-                    type: 'Feature' as const,
-                    geometry: { type: 'Point' as const, coordinates: [device.lng, device.lat] },
-                    properties: { 
-                      severity: deviceEvent?.severity || 'low'
-                    },
-                  };
-                }),
-              };
-              return (
-                <Source id="threat-devices" type="geojson" data={threatenedGeoJSON}>
-                  <Layer
-                    id="threat-indicators"
-                    type="circle"
-                    paint={{
-                      'circle-radius': 20,
-                      'circle-color': [
-                        'case',
-                        ['==', ['get', 'severity'], 'critical'],
-                        'rgba(255, 71, 87, 0.3)',
-                        ['==', ['get', 'severity'], 'high'],
-                        'rgba(255, 159, 67, 0.3)',
-                        'rgba(241, 196, 15, 0.3)',
-                      ],
-                      'circle-stroke-width': 2,
-                      'circle-stroke-color': [
-                        'case',
-                        ['==', ['get', 'severity'], 'critical'],
-                        '#ff4757',
-                        ['==', ['get', 'severity'], 'high'],
-                        '#ff9f43',
-                        '#f1c40f',
-                      ],
-                      'circle-opacity': 0.6,
-                    }}
-                  />
-                </Source>
-              );
-            })()}
-           </Source>
+          </Source>
             {selectedDevice && (
               <Source id="selected-device" type="geojson" data={{
                 type: 'FeatureCollection',

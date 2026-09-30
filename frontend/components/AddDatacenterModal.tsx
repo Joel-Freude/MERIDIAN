@@ -5,6 +5,7 @@ import Map, { Source, Layer } from 'react-map-gl/maplibre'
 import 'maplibre-gl/dist/maplibre-gl.css'
 
 const VECTOR_STYLE_URL = 'https://basemaps.cartocdn.com/gl/dark-matter-gl-style/style.json'
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8001'
 
 const COUNTRIES = [
   'Afghanistan', 'Albania', 'Algeria', 'Andorra', 'Angola', 'Argentina', 'Armenia', 'Australia', 'Austria', 'Azerbaijan',
@@ -235,15 +236,24 @@ interface DatacenterForm {
 interface AddDatacenterModalProps {
   isOpen: boolean
   onClose: () => void
-  onAdd: (datacenter: {
+  onAdd: (device: {
     id: string
-    name: string
+    hostname: string
+    ip: string
+    vendor: string
+    model: string
     site: string
-    location: string
     lat: number
     lng: number
-    status: 'online'
-    cities: { name: string; country: string; lat: number; lng: number; status: 'online' }[]
+    status: 'online' | 'warning' | 'offline'
+    security_score: number
+    last_vulnerability_scan: string | null
+    compliance_status: 'compliant' | 'non-compliant' | 'pending'
+    firmware_version: string
+    last_config_change: string | null
+    active_sessions: number
+    failed_logins: number
+    security_zone: 'trusted' | 'dmz' | 'untrusted'
   }) => void
 }
 
@@ -278,7 +288,7 @@ export default function AddDatacenterModal({ isOpen, onClose, onAdd }: AddDatace
     }
 
     const controller = new AbortController()
-    fetch(`/api/geocode?q=${encodeURIComponent(form.site)}`, { signal: controller.signal })
+    fetch(`${API_URL}/api/geocode?q=${encodeURIComponent(form.site)}`, { signal: controller.signal })
       .then((res) => res.json())
       .then((data) => {
         const feature = data?.features?.[0]
@@ -312,24 +322,26 @@ export default function AddDatacenterModal({ isOpen, onClose, onAdd }: AddDatace
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault()
-    onAdd({
-      id: `dc-${Date.now()}`,
-      name: form.name,
+    const newDevice = {
+      id: `dev-${Date.now()}`,
+      hostname: form.name || `device-${Date.now()}`,
+      ip: `10.0.${Math.floor(Math.random() * 255)}.${Math.floor(Math.random() * 254) + 1}`,
+      vendor: 'Unknown',
+      model: 'Unknown',
       site: form.site,
-      location: form.site,
       lat: parseFloat(form.lat) || 0,
       lng: parseFloat(form.lng) || 0,
-      status: 'online',
-      cities: [
-        {
-          name: form.site,
-          country: form.site,
-          lat: parseFloat(form.lat) || 0,
-          lng: parseFloat(form.lng) || 0,
-          status: 'online',
-        },
-      ],
-    })
+      status: 'online' as const,
+      security_score: 100,
+      last_vulnerability_scan: null,
+      compliance_status: 'pending' as const,
+      firmware_version: 'unknown',
+      last_config_change: null,
+      active_sessions: 0,
+      failed_logins: 0,
+      security_zone: 'trusted' as const,
+    }
+    onAdd(newDevice)
     setForm({ name: '', site: '', lat: '', lng: '' })
     onClose()
   }
@@ -355,7 +367,7 @@ export default function AddDatacenterModal({ isOpen, onClose, onAdd }: AddDatace
           </button>
         </div>
         <div className="flex">
-          <form onSubmit={handleSubmit} className="flex flex-col gap-4 p-5 w-[50%] h-[50lvh]">
+          <form onSubmit={handleSubmit} className="flex flex-col gap-4 p-5 w-[50%] h-[50vh]">
             <div className="flex flex-col gap-1 pt-40">
               <label className="text-xs text-gray-400" style={{ fontFamily: 'var(--font-data)' }}>
                 Name
@@ -436,7 +448,7 @@ export default function AddDatacenterModal({ isOpen, onClose, onAdd }: AddDatace
               </button>
             </div>
           </form>
-          <div className="w-[50%] h-[75lvh] border-l border-cyan-500/10 relative">
+          <div className="w-[50%] h-[75vh] border-l border-cyan-500/10 relative">
             {mapReady ? (
               <Map
                 initialViewState={{ latitude: mapView.lat, longitude: mapView.lng, zoom: mapView.zoom }}

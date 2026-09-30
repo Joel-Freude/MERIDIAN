@@ -3,7 +3,6 @@
 import { useState, useEffect } from 'react'
 import GlobeMap from '@/components/Globe'
 import NycPerformanceCard from '@/components/NycPerformanceCard'
-import DeviceList from '@/components/DeviceList'
 import AddDatacenterModal from '@/components/AddDatacenterModal'
 import SplashScreen from '@/components/SplashScreen'
 import SecurityDashboard from '@/components/SecurityDashboard'
@@ -63,7 +62,7 @@ const WIDGET_LABELS: Record<WidgetKey, string> = {
   security: 'Security',
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8001'
 
 const STATUS_COLOR: Record<Device['status'], string> = {
   online: '#00ff9d',
@@ -280,6 +279,10 @@ export default function DashboardPage() {
   const handleSelectDevice = (device: Device) => {
     setSelectedDevice(device)
     setFlyToLocation({ lat: device.lat, lng: device.lng })
+  }
+
+  const handleSelectDeviceWithoutFly = (device: Device) => {
+    setSelectedDevice(device)
   }
 
   const sites = Array.from(new Set(devices.map((d) => d.site)))
@@ -661,7 +664,7 @@ export default function DashboardPage() {
             NDIM
           </h1>
           <p className="text-[10px] tracking-widest text-gray-400 mt-0.5">
-            NETWORK DEVICE IVENTORY MANAGER
+             NETWORK DEVICE INVENTORY MANAGER
           </p>
         </div>
 
@@ -744,7 +747,95 @@ export default function DashboardPage() {
                 setFlyToLocation(coords)
                 setSelectedSite(coords?.site ?? null)
               }} onOpenAddModal={() => setIsAddModalOpen(true)} />
-               {selectedSite && <DeviceList key={selectedSite} site={selectedSite} />}
+              {selectedSite && (
+                <div key={selectedSite} className="hud-panel rounded-lg p-4 w-[420px]">
+                  <div className="text-xs font-semibold text-cyan-300 mb-3" style={{ fontFamily: 'var(--font-data)' }}>
+                    DEVICES — {selectedSite}
+                  </div>
+                  <div className="max-h-[220px] overflow-y-auto pr-1 performance-scroll">
+                    {devicesLoading && (
+                      <div className="flex flex-col gap-2">
+                        {[1, 2, 3].map((i) => (
+                          <div key={i} className="flex items-center gap-3 animate-pulse">
+                            <div className="h-4 w-24 bg-cyan-500/10 rounded" />
+                            <div className="h-3 w-16 bg-cyan-500/10 rounded" />
+                          </div>
+                        ))}
+                      </div>
+                    )}
+                    {devicesError && (
+                      <div className="text-xs text-red-400">Failed to load devices</div>
+                    )}
+                    {!devicesLoading && !devicesError && (
+                      <div className="flex flex-col gap-1">
+                        {devices.filter((device) => device.site === selectedSite).map((device) => {
+                          const isSelected = selectedDevice?.id === device.id
+                          return (
+                            <button
+                              key={device.id}
+                              onClick={() => handleSelectDeviceWithoutFly(device)}
+                              className={`w-full text-left rounded border px-3 py-2 transition-colors ${
+                                isSelected
+                                  ? 'border-cyan-400/40 bg-cyan-500/10'
+                                  : 'border-cyan-500/10 hover:border-cyan-400/30 hover:bg-cyan-500/5'
+                              }`}
+                            >
+                              <div className="flex items-center justify-between">
+                                <span className="text-xs text-gray-200" style={{ fontFamily: 'var(--font-data)' }}>
+                                  {device.hostname}
+                                </span>
+                                <div className="flex items-center gap-2">
+                                  <span
+                                    className="text-[10px] font-semibold px-2 py-0.5 rounded"
+                                    style={{
+                                      fontFamily: 'var(--font-data)',
+                                      backgroundColor: `${STATUS_COLOR[device.status]}20`,
+                                      color: STATUS_COLOR[device.status],
+                                    }}
+                                  >
+                                    {device.status.toUpperCase()}
+                                  </span>
+                                  <span
+                                    className="text-[10px] font-bold px-2 py-0.5 rounded"
+                                    style={{
+                                      fontFamily: 'var(--font-data)',
+                                      backgroundColor: `${SECURITY_SCORE_COLOR(device.security_score)}20`,
+                                      color: SECURITY_SCORE_COLOR(device.security_score),
+                                    }}
+                                  >
+                                    {device.security_score}
+                                  </span>
+                                </div>
+                              </div>
+                              <div className="mt-1 flex items-center justify-between text-[10px] text-gray-500" style={{ fontFamily: 'var(--font-data)' }}>
+                                <span>{device.ip}</span>
+                                <div className="flex items-center gap-2">
+                                  <span>{device.site}</span>
+                                  <span
+                                    className="text-[10px] px-1 py-0.5 rounded border"
+                                    style={{
+                                      fontFamily: 'var(--font-data)',
+                                      borderColor: COMPLIANCE_COLOR[device.compliance_status],
+                                      color: COMPLIANCE_COLOR[device.compliance_status],
+                                    }}
+                                  >
+                                    {device.compliance_status.toUpperCase()}
+                                  </span>
+                                </div>
+                              </div>
+                            </button>
+                          )
+                        })}
+                        {devices.filter((device) => device.site === selectedSite).length === 0 && (
+                          <div className="text-xs text-gray-500" style={{ fontFamily: 'var(--font-data)' }}>
+                            No matching devices.
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
             <AddDatacenterModal
               isOpen={isAddModalOpen}
@@ -849,178 +940,14 @@ export default function DashboardPage() {
                    ORGANIZE NETWORK
                   </button>
                  </div>
+              </div>
+          </>
+        )}
 
-                  {selectedDevice && (
-                    <div className="hud-panel border border-cyan-500/30 rounded-lg p-4" style={{ maxHeight: '320px', display: 'flex', flexDirection: 'column' }}>
-                      <div className="text-xs font-semibold text-cyan-300 mb-3" style={{ fontFamily: 'var(--font-data)' }}>
-                        DEVICE PERFORMANCE
-                      </div>
-                      <div className="overflow-y-auto performance-scroll pr-1" style={{ maxHeight: '260px' }}>
-                        <div className="flex items-center gap-4">
-                          <div className="flex-shrink-0">
-                            <svg width="80" height="80" viewBox="0 0 80 80">
-                              <circle cx="40" cy="40" r="32" fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="6" />
-                              <circle
-                                cx="40"
-                                cy="40"
-                                r="32"
-                                fill="none"
-                                stroke="#00d4ff"
-                                strokeWidth="6"
-                                strokeDasharray={`${(deviceHealth.overall / 100) * 201} 201`}
-                                transform="rotate(-90 40 40)"
-                                strokeLinecap="round"
-                              />
-                              <text x="40" y="40" textAnchor="middle" dy="0.35em" fill="#e8e6de" fontSize="16" fontWeight="700" fontFamily="var(--font-data)">
-                                {Math.round(deviceHealth.overall)}%
-                              </text>
-                            </svg>
-                          </div>
-                          <div className="flex-1 min-w-0">
-                            <div className="text-sm font-semibold text-gray-200 truncate" style={{ fontFamily: 'var(--font-data)' }}>
-                              {selectedDevice.hostname}
-                            </div>
-                            <div className="text-[10px] text-gray-500" style={{ fontFamily: 'var(--font-data)' }}>
-                              {selectedDevice.site}
-                            </div>
-                            <div className="mt-3 space-y-2">
-                              <div>
-                                <div className="flex items-center justify-between text-[10px] mb-1" style={{ fontFamily: 'var(--font-data)' }}>
-                                  <span className="text-gray-500">CPU</span>
-                                  <span className="text-gray-300">{Math.round(deviceHealth.cpu)}%</span>
-                                </div>
-                                <div className="h-1 bg-cyan-500/10 rounded overflow-hidden">
-                                  <div className="h-full rounded bg-cyan-400 transition-all" style={{ width: `${deviceHealth.cpu}%` }} />
-                                </div>
-                              </div>
-                              <div>
-                                <div className="flex items-center justify-between text-[10px] mb-1" style={{ fontFamily: 'var(--font-data)' }}>
-                                  <span className="text-gray-500">RAM</span>
-                                  <span className="text-gray-300">{Math.round(deviceHealth.ram)}%</span>
-                                </div>
-                                <div className="h-1 bg-cyan-500/10 rounded overflow-hidden">
-                                  <div className="h-full rounded bg-cyan-400 transition-all" style={{ width: `${deviceHealth.ram}%` }} />
-                                </div>
-                              </div>
-                              <div>
-                                <div className="flex items-center justify-between text-[10px] mb-1" style={{ fontFamily: 'var(--font-data)' }}>
-                                  <span className="text-gray-500">UPLOAD</span>
-                                  <span className="text-gray-300">{Math.round(deviceHealth.upload)}%</span>
-                                </div>
-                                <div className="h-1 bg-cyan-500/10 rounded overflow-hidden">
-                                  <div className="h-full rounded bg-cyan-400 transition-all" style={{ width: `${deviceHealth.upload}%` }} />
-                                </div>
-                              </div>
-                              <div>
-                                <div className="flex items-center justify-between text-[10px] mb-1" style={{ fontFamily: 'var(--font-data)' }}>
-                                  <span className="text-gray-500">DOWNLOAD</span>
-                                  <span className="text-gray-300">{Math.round(deviceHealth.download)}%</span>
-                                </div>
-                                <div className="h-1 bg-cyan-500/10 rounded overflow-hidden">
-                                  <div className="h-full rounded bg-cyan-400 transition-all" style={{ width: `${deviceHealth.download}%` }} />
-                                </div>
-                              </div>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                 {showDeviceList && (
-                 <div key={activeSite ?? 'all'} className="hud-panel rounded-lg p-4">
-                   <div className="text-xs font-semibold text-cyan-300 mb-3" style={{ fontFamily: 'var(--font-data)' }}>
-                     DEVICES — {activeSite ?? 'ALL SITES'}
-                   </div>
-                    <div className="max-h-[220px] overflow-y-auto pr-1 performance-scroll">
-                     {devicesLoading && (
-                       <div className="flex flex-col gap-2">
-                         {[1, 2, 3].map((i) => (
-                           <div key={i} className="flex items-center gap-3 animate-pulse">
-                             <div className="h-4 w-24 bg-cyan-500/10 rounded" />
-                             <div className="h-3 w-16 bg-cyan-500/10 rounded" />
-                           </div>
-                         ))}
-                       </div>
-                     )}
-                     {devicesError && (
-                       <div className="text-xs text-red-400">Failed to load devices</div>
-                     )}
-                     {!devicesLoading && !devicesError && (
-                       <div className="flex flex-col gap-1">
-                         {(activeSite ? siteDevices : filteredDevices).map((device) => {
-                           const isSelected = selectedDevice?.id === device.id
-                           return (
-                             <button
-                               key={device.id}
-                               onClick={() => handleSelectDevice(device)}
-                               className={`w-full text-left rounded border px-3 py-2 transition-colors ${
-                                 isSelected
-                                   ? 'border-cyan-400/40 bg-cyan-500/10'
-                                   : 'border-cyan-500/10 hover:border-cyan-400/30 hover:bg-cyan-500/5'
-                               }`}
-                             >
-                               <div className="flex items-center justify-between">
-                                 <span className="text-xs text-gray-200" style={{ fontFamily: 'var(--font-data)' }}>
-                                   {device.hostname}
-                                 </span>
-                                 <div className="flex items-center gap-2">
-                                   <span
-                                     className="text-[10px] font-semibold px-2 py-0.5 rounded"
-                                     style={{
-                                       fontFamily: 'var(--font-data)',
-                                       backgroundColor: `${STATUS_COLOR[device.status]}20`,
-                                       color: STATUS_COLOR[device.status],
-                                     }}
-                                   >
-                                     {device.status.toUpperCase()}
-                                   </span>
-                                   <span
-                                     className="text-[10px] font-bold px-2 py-0.5 rounded"
-                                     style={{
-                                       fontFamily: 'var(--font-data)',
-                                       backgroundColor: `${SECURITY_SCORE_COLOR(device.security_score)}20`,
-                                       color: SECURITY_SCORE_COLOR(device.security_score),
-                                     }}
-                                   >
-                                     {device.security_score}
-                                   </span>
-                                 </div>
-                               </div>
-                               <div className="mt-1 flex items-center justify-between text-[10px] text-gray-500" style={{ fontFamily: 'var(--font-data)' }}>
-                                 <span>{device.ip}</span>
-                                 <div className="flex items-center gap-2">
-                                   <span>{device.site}</span>
-                                   <span
-                                     className="text-[10px] px-1 py-0.5 rounded border"
-                                     style={{
-                                       fontFamily: 'var(--font-data)',
-                                       borderColor: COMPLIANCE_COLOR[device.compliance_status],
-                                       color: COMPLIANCE_COLOR[device.compliance_status],
-                                     }}
-                                   >
-                                     {device.compliance_status.toUpperCase()}
-                                   </span>
-                                 </div>
-                               </div>
-                             </button>
-                           )
-                         })}
-                         {(activeSite ? siteDevices : filteredDevices).length === 0 && (
-                           <div className="text-xs text-gray-500" style={{ fontFamily: 'var(--font-data)' }}>
-                             No matching devices.
-                           </div>
-                         )}
-                       </div>
-                     )}
-                   </div>
-                </div>
-              )}
-            </div>
-
-            {selectedDevice && (
+        {selectedDevice && (
+          <>
               <div className="absolute right-4 top-24 z-30 w-80 right-widget-panel is-active">
-                <div className="hud-panel rounded-lg p-4">
+                <div className="hud-panel rounded-lg p-4" style={{ height: '50vh' }}>
                   <div className="flex items-center justify-between mb-3">
                     <h3 className="text-sm font-bold text-cyan-400 tracking-wider">DEVICE DETAIL</h3>
                     <button
@@ -1031,7 +958,7 @@ export default function DashboardPage() {
                       CLOSE
                     </button>
                   </div>
-                  <div className="space-y-2 text-xs" style={{ fontFamily: 'var(--font-data)' }}>
+                  <div className="space-y-2 text-xs overflow-y-auto pr-2 performance-scroll" style={{ fontFamily: 'var(--font-data)', height: 'calc(50vh - 60px)', overflowY: 'scroll' }}>
                     <div className="flex items-center justify-between">
                       <span className="text-gray-500">HOSTNAME</span>
                       <span className="text-gray-200">{selectedDevice.hostname}</span>
@@ -1065,69 +992,140 @@ export default function DashboardPage() {
                         {selectedDevice.status.toUpperCase()}
                       </span>
                     </div>
-                  </div>
-                  <div className="mt-4 border-t border-cyan-500/10 pt-3">
-                    <div className="text-[10px] text-gray-500 mb-2" style={{ fontFamily: 'var(--font-data)' }}>
-                      SECURITY
-                    </div>
-                    <div className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <span className="text-gray-500">SECURITY SCORE</span>
-                        <span className="font-semibold" style={{ color: SECURITY_SCORE_COLOR(selectedDevice.security_score) }}>
-                          {selectedDevice.security_score}/100
-                        </span>
+                    <div className="mt-4 border-t border-cyan-500/10 pt-3">
+                      <div className="text-[10px] text-gray-500 mb-2" style={{ fontFamily: 'var(--font-data)' }}>
+                        SECURITY
                       </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-gray-500">COMPLIANCE</span>
-                        <span
-                          className="font-semibold"
-                          style={{ color: COMPLIANCE_COLOR[selectedDevice.compliance_status] }}
-                        >
-                          {selectedDevice.compliance_status.toUpperCase()}
-                        </span>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-gray-500">SECURITY ZONE</span>
-                        <span className="text-gray-200">{selectedDevice.security_zone.toUpperCase()}</span>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-gray-500">FIRMWARE</span>
-                        <span className="text-gray-200">{selectedDevice.firmware_version}</span>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-gray-500">ACTIVE SESSIONS</span>
-                        <span className="text-gray-200">{selectedDevice.active_sessions}</span>
-                      </div>
-                      <div className="flex items-center justify-between">
-                        <span className="text-gray-500">FAILED LOGINS</span>
-                        <span className="text-gray-200">{selectedDevice.failed_logins}</span>
-                      </div>
-                    </div>
-                  </div>
-                  <div className="mt-4 border-t border-cyan-500/10 pt-3">
-                    <div className="text-[10px] text-gray-500 mb-2" style={{ fontFamily: 'var(--font-data)' }}>
-                      INTERFACES
-                    </div>
-                    <div className="space-y-1">
-                      {['Gi0/0', 'Gi0/1', 'Gi0/2', 'Gi0/3'].map((iface) => (
-                        <div key={iface} className="flex items-center justify-between rounded border border-cyan-500/10 px-3 py-1.5">
-                          <span className="text-[10px] text-gray-300" style={{ fontFamily: 'var(--font-data)' }}>{iface}</span>
-                          <span className="text-[10px] text-green-400" style={{ fontFamily: 'var(--font-data)' }}>UP</span>
+                      <div className="space-y-2">
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-500">SECURITY SCORE</span>
+                          <span className="font-semibold" style={{ color: SECURITY_SCORE_COLOR(selectedDevice.security_score) }}>
+                            {selectedDevice.security_score}/100
+                          </span>
                         </div>
-                      ))}
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-500">COMPLIANCE</span>
+                          <span
+                            className="font-semibold"
+                            style={{ color: COMPLIANCE_COLOR[selectedDevice.compliance_status] }}
+                          >
+                            {selectedDevice.compliance_status.toUpperCase()}
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-500">SECURITY ZONE</span>
+                          <span className="text-gray-200">{selectedDevice.security_zone.toUpperCase()}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-500">FIRMWARE</span>
+                          <span className="text-gray-200">{selectedDevice.firmware_version}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-500">ACTIVE SESSIONS</span>
+                          <span className="text-gray-200">{selectedDevice.active_sessions}</span>
+                        </div>
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-500">FAILED LOGINS</span>
+                          <span className="text-gray-200">{selectedDevice.failed_logins}</span>
+                        </div>
+                      </div>
                     </div>
-                  </div>
-                  <div className="mt-4 border-t border-cyan-500/10 pt-3">
-                    <div className="text-[10px] text-gray-500 mb-2" style={{ fontFamily: 'var(--font-data)' }}>
-                      VULNERABILITY SCANNER
+                    <div className="mt-4 border-t border-cyan-500/10 pt-3">
+                      <div className="text-[10px] text-gray-500 mb-2" style={{ fontFamily: 'var(--font-data)' }}>
+                        INTERFACES
+                      </div>
+                      <div className="space-y-1">
+                        {['Gi0/0', 'Gi0/1', 'Gi0/2', 'Gi0/3'].map((iface) => (
+                          <div key={iface} className="flex items-center justify-between rounded border border-cyan-500/10 px-3 py-1.5">
+                            <span className="text-[10px] text-gray-300" style={{ fontFamily: 'var(--font-data)' }}>{iface}</span>
+                            <span className="text-[10px] text-green-400" style={{ fontFamily: 'var(--font-data)' }}>UP</span>
+                          </div>
+                        ))}
+                      </div>
                     </div>
-                    <VulnerabilityScanner deviceId={selectedDevice.id} />
+                    <div className="mt-4 border-t border-cyan-500/10 pt-3">
+                      <div className="text-[10px] text-gray-500 mb-2" style={{ fontFamily: 'var(--font-data)' }}>
+                        VULNERABILITY SCANNER
+                      </div>
+                      <VulnerabilityScanner deviceId={selectedDevice.id} />
+                    </div>
+                    <div className="mt-4 border-t border-cyan-500/10 pt-3">
+                      <div className="text-[10px] text-gray-500 mb-2" style={{ fontFamily: 'var(--font-data)' }}>
+                        DEVICE PERFORMANCE
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <div className="flex-shrink-0">
+                          <svg width="60" height="60" viewBox="0 0 80 80">
+                            <circle cx="40" cy="40" r="32" fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="6" />
+                            <circle
+                              cx="40"
+                              cy="40"
+                              r="32"
+                              fill="none"
+                              stroke="#00d4ff"
+                              strokeWidth="6"
+                              strokeDasharray={`${(deviceHealth.overall / 100) * 201} 201`}
+                              transform="rotate(-90 40 40)"
+                              strokeLinecap="round"
+                            />
+                            <text x="40" y="40" textAnchor="middle" dy="0.35em" fill="#e8e6de" fontSize="16" fontWeight="700" fontFamily="var(--font-data)">
+                              {Math.round(deviceHealth.overall)}%
+                            </text>
+                          </svg>
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-semibold text-gray-200 truncate" style={{ fontFamily: 'var(--font-data)' }}>
+                            {selectedDevice.hostname}
+                          </div>
+                          <div className="text-[10px] text-gray-500" style={{ fontFamily: 'var(--font-data)' }}>
+                            {selectedDevice.site}
+                          </div>
+                          <div className="mt-3 space-y-2">
+                            <div>
+                              <div className="flex items-center justify-between text-[10px] mb-1" style={{ fontFamily: 'var(--font-data)' }}>
+                                <span className="text-gray-500">CPU</span>
+                                <span className="text-gray-300">{Math.round(deviceHealth.cpu)}%</span>
+                              </div>
+                              <div className="h-1 bg-cyan-500/10 rounded overflow-hidden">
+                                <div className="h-full rounded bg-cyan-400 transition-all" style={{ width: `${deviceHealth.cpu}%` }} />
+                              </div>
+                            </div>
+                            <div>
+                              <div className="flex items-center justify-between text-[10px] mb-1" style={{ fontFamily: 'var(--font-data)' }}>
+                                <span className="text-gray-500">RAM</span>
+                                <span className="text-gray-300">{Math.round(deviceHealth.ram)}%</span>
+                              </div>
+                              <div className="h-1 bg-cyan-500/10 rounded overflow-hidden">
+                                <div className="h-full rounded bg-cyan-400 transition-all" style={{ width: `${deviceHealth.ram}%` }} />
+                              </div>
+                            </div>
+                            <div>
+                              <div className="flex items-center justify-between text-[10px] mb-1" style={{ fontFamily: 'var(--font-data)' }}>
+                                <span className="text-gray-500">UPLOAD</span>
+                                <span className="text-gray-300">{Math.round(deviceHealth.upload)}%</span>
+                              </div>
+                              <div className="h-1 bg-cyan-500/10 rounded overflow-hidden">
+                                <div className="h-full rounded bg-cyan-400 transition-all" style={{ width: `${deviceHealth.upload}%` }} />
+                              </div>
+                            </div>
+                            <div>
+                              <div className="flex items-center justify-between text-[10px] mb-1" style={{ fontFamily: 'var(--font-data)' }}>
+                                <span className="text-gray-500">DOWNLOAD</span>
+                                <span className="text-gray-300">{Math.round(deviceHealth.download)}%</span>
+                              </div>
+                              <div className="h-1 bg-cyan-500/10 rounded overflow-hidden">
+                                <div className="h-full rounded bg-cyan-400 transition-all" style={{ width: `${deviceHealth.download}%` }} />
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
               </div>
+            </>
             )}
-          </>
-        )}
 
         {isActive('activity') && (
           <div className="absolute left-4 top-24 z-30 flex flex-col gap-4 w-[420px]">

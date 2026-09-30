@@ -23,7 +23,7 @@ interface Device {
   security_zone: 'trusted' | 'dmz' | 'untrusted'
 }
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
+const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8001'
 
 function ProgressRing({ percent, size = 64, strokeWidth = 6, active }: { percent: number; size?: number; strokeWidth?: number; active?: boolean }) {
   const radius = size / 2 - strokeWidth
