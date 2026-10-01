@@ -2,8 +2,6 @@
 
 import { useEffect, useRef, useState, useCallback } from 'react';
 import Map, { MapRef, NavigationControl, Source, Layer } from 'react-map-gl/maplibre';
-import { MapboxOverlay } from '@deck.gl/mapbox';
-import { ArcLayer } from 'deck.gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import '@/styles/theme.css';
 import type { FeatureCollection, Feature, Point, LineString } from 'geojson';
@@ -86,8 +84,25 @@ const DEFAULT_DEVICES: Device[] = [
   { id: 'dev-003', hostname: 'fw-nyc01', ip: '10.0.0.3', vendor: 'Palo Alto', model: 'PA-5200', site: 'New York DC', lat: 40.7128, lng: -74.006, status: 'warning', security_score: 72, last_vulnerability_scan: '2026-09-23T16:30:00Z', compliance_status: 'non-compliant', firmware_version: '10.1.8', last_config_change: '2026-09-15T09:20:00Z', active_sessions: 5, failed_logins: 15, security_zone: 'dmz' },
 ];
 
-const DATA_CENTER_IDS = new Set(['dev-001', 'dev-006', 'dev-012', 'dev-016', 'dev-021', 'dev-029']);
-const CONNECTED_SITE_IDS = new Set(['dev-002', 'dev-003', 'dev-004', 'dev-005', 'dev-007', 'dev-008', 'dev-009', 'dev-010', 'dev-011', 'dev-013', 'dev-014', 'dev-015', 'dev-017', 'dev-018', 'dev-019', 'dev-020', 'dev-022', 'dev-023', 'dev-024', 'dev-025', 'dev-026', 'dev-027', 'dev-028', 'dev-030', 'dev-031', 'dev-032', 'dev-033', 'dev-034', 'dev-035', 'dev-036']);
+const HUB_DEVICE: Device = {
+  id: 'dev-hub-001',
+  hostname: 'core-sw-central',
+  ip: '10.255.0.1',
+  vendor: 'Cisco',
+  model: 'Catalyst 9300',
+  site: 'Central Hub',
+  lat: 3.83,
+  lng: 11.491428,
+  status: 'online',
+  security_score: 100,
+  last_vulnerability_scan: null,
+  compliance_status: 'compliant',
+  firmware_version: '17.9.4a',
+  last_config_change: null,
+  active_sessions: 0,
+  failed_logins: 0,
+  security_zone: 'trusted',
+};
 
 function devicesToGeoJSON(devices: Device[]): FeatureCollection<Point, any> {
   return {
@@ -106,18 +121,19 @@ function devicesToGeoJSON(devices: Device[]): FeatureCollection<Point, any> {
 
 function arcsToGeoJSON(devices: Device[]): FeatureCollection<LineString> {
   const features: Feature<LineString>[] = [];
-  const dc = devices.find((d) => DATA_CENTER_IDS.has(d.id));
-  if (!dc) return { type: 'FeatureCollection', features };
+  const sourceDevices = devices.find((d) => d.id === HUB_DEVICE.id) ? devices : [...DEFAULT_DEVICES, HUB_DEVICE];
+  const hub = sourceDevices.find((d) => d.id === HUB_DEVICE.id);
+  if (!hub) return { type: 'FeatureCollection', features };
 
-  const connected = devices.filter((d) => CONNECTED_SITE_IDS.has(d.id));
-  for (const site of connected) {
+  const targets = sourceDevices.filter((d) => d.id !== hub.id && d.site.trim().toLowerCase().endsWith('dc'));
+  for (const device of targets) {
     features.push({
       type: 'Feature',
       geometry: {
         type: 'LineString',
         coordinates: [
-          [dc.lng, dc.lat],
-          [site.lng, site.lat],
+          [hub.lng, hub.lat],
+          [device.lng, device.lat],
         ],
       },
       properties: {},
@@ -127,13 +143,27 @@ function arcsToGeoJSON(devices: Device[]): FeatureCollection<LineString> {
 }
 
 function arcsToDeckGL(devices: Device[]) {
-  const dc = devices.find((d) => DATA_CENTER_IDS.has(d.id));
-  if (!dc) return [];
-  const connected = devices.filter((d) => CONNECTED_SITE_IDS.has(d.id));
-  return connected.map((site) => ({
-    source: [dc.lng, dc.lat],
-    target: [site.lng, site.lat],
+  const sourceDevices = devices.find((d) => d.id === HUB_DEVICE.id) ? devices : [...DEFAULT_DEVICES, HUB_DEVICE];
+  const hub = sourceDevices.find((d) => d.id === HUB_DEVICE.id);
+  if (!hub) return [];
+  const targets = sourceDevices.filter((d) => d.id !== hub.id && d.site.trim().toLowerCase().endsWith('dc'));
+  return targets.map((device) => ({
+    source: [hub.lng, hub.lat],
+    target: [device.lng, device.lat],
   }));
+}
+
+function hubToGeoJSON(): FeatureCollection<Point, any> {
+  return {
+    type: 'FeatureCollection',
+    features: [
+      {
+        type: 'Feature',
+        geometry: { type: 'Point', coordinates: [HUB_DEVICE.lng, HUB_DEVICE.lat] },
+        properties: {},
+      },
+    ],
+  };
 }
 
 function nightHemisphereGeoJSON(): FeatureCollection<Point> {
@@ -186,7 +216,14 @@ interface GlobeMapProps {
   selectedDevice?: Device | null;
   selectedSite?: string | null;
   securityEvents?: SecurityEvent[];
+  transitionSpeed?: 'slow' | 'medium' | 'fast';
 }
+
+const TRANSITION_SPEEDS = {
+  slow: { zoomOutDuration: 9000, intermediateDelay: 7500, zoomInDuration: 8000, finalDelay: 7500 },
+  medium: { zoomOutDuration: 5000, intermediateDelay: 3000, zoomInDuration: 4000, finalDelay: 3000 },
+  fast: { zoomOutDuration: 2500, intermediateDelay: 1500, zoomInDuration: 2000, finalDelay: 1500 },
+};
 
 export default function GlobeMap({
   initialProjection = 'globe',
@@ -196,9 +233,9 @@ export default function GlobeMap({
   selectedDevice,
   selectedSite,
   securityEvents = [],
-}: GlobeMapProps) {
+  transitionSpeed = 'medium',
+  }: GlobeMapProps) {
   const mapRef = useRef<MapRef>(null);
-  const overlayRef = useRef<MapboxOverlay | null>(null);
   const [ready, setReady] = useState(false);
   const [projection, setProjection] = useState<ProjectionMode>(initialProjection);
   const [baseStyle, setBaseStyle] = useState<BaseStyle>('map');
@@ -212,13 +249,25 @@ export default function GlobeMap({
   const [isFlying, setIsFlying] = useState(false);
   const [isInteracting, setIsInteracting] = useState(false);
   const pulseRef = useRef<number | null>(null);
+  const speedConfig = TRANSITION_SPEEDS[transitionSpeed];
 
   useEffect(() => {
     let cancelled = false;
     fetch(`${API_URL}/api/devices`)
       .then((res) => res.json())
-      .then((data) => { if (!cancelled) setDevices(data.devices ?? []); })
-      .catch(() => { if (!cancelled) setDevicesError(true); });
+      .then((data) => {
+        if (!cancelled) {
+          const apiDevices = data.devices ?? [];
+          const merged = apiDevices.some((d) => d.id === HUB_DEVICE.id) ? apiDevices : [...apiDevices, HUB_DEVICE];
+          setDevices(merged);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setDevicesError(true);
+          setDevices(DEFAULT_DEVICES);
+        }
+      });
     return () => { cancelled = true; };
   }, []);
 
@@ -277,15 +326,15 @@ export default function GlobeMap({
       if (typeof (map as any).easeTo === 'function') {
         (map as any).easeTo({
           center: nextCenter,
-          zoom: 2.8,
+          zoom: 3,
           bearing: 0,
           pitch: 0,
-          duration: 9000,
+          duration: speedConfig.zoomOutDuration,
           essential: true,
         });
       } else {
         map.setCenter(nextCenter);
-        map.setZoom(2.8);
+        map.setZoom(3);
         map.setBearing(0);
         map.setPitch(0);
         cleanup();
@@ -313,20 +362,20 @@ export default function GlobeMap({
           if (typeof (map as any).easeTo === 'function') {
             (map as any).easeTo({
               center: nextCenter,
-              zoom: 12,
+              zoom: 8,
               bearing: 0,
               pitch: 0,
-              duration: 9000,
+              duration: speedConfig.zoomOutDuration,
               essential: true,
             });
           } else {
             map.setCenter(nextCenter);
-            map.setZoom(12);
+            map.setZoom(8);
             map.setBearing(0);
             map.setPitch(0);
             handleStep2End();
           }
-        }, 7500);
+        }, speedConfig.intermediateDelay);
       };
 
       const handleStep2End = () => {
@@ -340,7 +389,7 @@ export default function GlobeMap({
               zoom: 18,
               bearing: 0,
               pitch: 0,
-              duration: 8000,
+              duration: speedConfig.zoomInDuration,
               essential: true,
             });
           } else {
@@ -350,7 +399,7 @@ export default function GlobeMap({
             map.setPitch(0);
             handleFinalMoveEnd();
           }
-        }, 7500);
+        }, speedConfig.finalDelay);
       };
 
       map.on('moveend', handleStep1End);
@@ -383,7 +432,7 @@ export default function GlobeMap({
         zoom: 18,
         bearing: 0,
         pitch: 20,
-        duration: 6500,
+        duration: speedConfig.zoomInDuration,
         essential: true,
       });
     } else {
@@ -426,38 +475,6 @@ export default function GlobeMap({
       inner.setStyle(next === 'map' ? VECTOR_STYLE_URL : SATELLITE_STYLE);
     }
   }, [baseStyle]);
-
-  useEffect(() => {
-    if (!ready) return;
-    const map = mapRef.current;
-    if (!map) return;
-    setMapProjection(map.getMap(), initialProjection);
-
-    if (!overlayRef.current) {
-      const overlay = new MapboxOverlay({ layers: [] });
-      map.getMap().addControl(overlay);
-      overlayRef.current = overlay;
-    }
-  }, [ready, initialProjection]);
-
-  useEffect(() => {
-    const overlay = overlayRef.current;
-    if (!overlay) return;
-    overlay.setProps({
-      layers: [
-        new ArcLayer({
-          id: 'arcs-3d',
-          data: arcsToDeckGL(devices),
-          getSourcePosition: (d: any) => d.source,
-          getTargetPosition: (d: any) => d.target,
-          getWidth: 6,
-          getSourceColor: [0, 212, 255],
-          getTargetColor: [0, 212, 255],
-          getHeight: 2,
-        }),
-      ],
-    });
-  }, [devices]);
 
   useEffect(() => {
     if (!ready || projection !== 'globe' || isFlying || isInteracting || flyToLocation) {
@@ -575,29 +592,36 @@ export default function GlobeMap({
                 'circle-opacity': 0.95,
               }}
             />
+          </Source>
+          <Source id="hub" type="geojson" data={hubToGeoJSON()}>
             <Layer
-              id="devices-security-zone"
-              type="circle"
+              id="hub-symbol"
+              type="symbol"
+              layout={{
+                'text-field': '◆',
+                'text-size': 22,
+                'text-allow-overlap': true,
+                'text-ignore-placement': true,
+              }}
               paint={{
-                'circle-radius': 25,
-                'circle-color': [
-                  'case',
-                  ['==', ['get', 'security_zone'], 'trusted'],
-                  'rgba(0, 255, 157, 0.1)',
-                  ['==', ['get', 'security_zone'], 'dmz'],
-                  'rgba(255, 159, 67, 0.1)',
-                  'rgba(255, 71, 87, 0.1)',
-                ],
-                'circle-stroke-width': 1,
-                'circle-stroke-color': [
-                  'case',
-                  ['==', ['get', 'security_zone'], 'trusted'],
-                  'rgba(0, 255, 157, 0.3)',
-                  ['==', ['get', 'security_zone'], 'dmz'],
-                  'rgba(255, 159, 67, 0.3)',
-                  'rgba(255, 71, 87, 0.3)',
-                ],
-                'circle-opacity': 0.8,
+                'text-color': '#00d4ff',
+                'text-halo-color': '#0a0a0f',
+                'text-halo-width': 2,
+              }}
+            />
+          </Source>
+          <Source id="arcs" type="geojson" data={arcsToGeoJSON(devices)}>
+            <Layer
+              id="arcs-line"
+              type="line"
+              layout={{
+                'line-join': 'round',
+                'line-cap': 'round',
+              }}
+              paint={{
+                'line-color': '#00d4ff',
+                'line-width': 2,
+                'line-opacity': 0.8,
               }}
             />
           </Source>

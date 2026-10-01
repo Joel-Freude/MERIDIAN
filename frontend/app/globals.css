@@ -96,3 +96,41 @@ body {
   opacity: 0;
   pointer-events: none;
 }
+.right-widget-panel.animate-slideOutRight,
+.right-widget-panel.animate-slideInRight {
+  transition: none;
+}
+
+@keyframes slideInRight {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+.animate-slideInRight {
+  animation: slideInRight 0.35s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.animate-slideOutRight {
+  animation: slideOutRight 0.55s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.delay-150 {
+  animation-delay: 150ms;
+}
+
+@keyframes slideOutRight {
+  from {
+    transform: translateX(0);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+}
