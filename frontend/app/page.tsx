@@ -1,6 +1,6 @@
-'use client'
+﻿'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import GlobeMap from '@/components/Globe'
 import NycPerformanceCard from '@/components/NycPerformanceCard'
 import AddDatacenterModal from '@/components/AddDatacenterModal'
@@ -131,12 +131,18 @@ export default function DashboardPage() {
   const [activities, setActivities] = useState<{ id: string; message: string; severity: 'high' | 'medium' | 'low'; timestamp: string }[]>([])
   const [activityFilter, setActivityFilter] = useState<'all' | 'high' | 'medium' | 'low'>('all')
   const [acknowledgedActivities, setAcknowledgedActivities] = useState<Set<string>>(new Set())
-  const [deviceHealth, setDeviceHealth] = useState({ cpu: 50, ram: 50, upload: 50, download: 50, overall: 50 })
+  const [deviceHealth, setDeviceHealth] = useState({ cpu: 50, ram: 50, upload: 50, download: 50, overall: 50, inBw: 50, outBw: 35 })
   const [securityEvents, setSecurityEvents] = useState<SecurityEvent[]>([])
   const [threatsLoading, setThreatsLoading] = useState(false)
   const [threatsError, setThreatsError] = useState(false)
   const [threatSeverityFilter, setThreatSeverityFilter] = useState<'all' | 'critical' | 'high' | 'medium' | 'low'>('all')
   const [acknowledgedThreats, setAcknowledgedThreats] = useState<Set<string>>(new Set())
+  const [globeTopologySite, setGlobeTopologySite] = useState<string | null>(null)
+  const pendingTopologySiteRef = useRef<string | null>(null)
+  const topologyTimerRef = useRef<NodeJS.Timeout | null>(null)
+  const [isTopologyExiting, setIsTopologyExiting] = useState(false)
+  const [isDeviceWidgetExiting, setIsDeviceWidgetExiting] = useState(false)
+  const [visibleDeviceSite, setVisibleDeviceSite] = useState<string | null>(null)
 
   useEffect(() => {
     const saved = localStorage.getItem('activeWidgets')
@@ -285,12 +291,22 @@ export default function DashboardPage() {
         const ram = Math.max(10, Math.min(90, prev.ram + (Math.random() - 0.5) * 15))
         const upload = Math.max(10, Math.min(95, prev.upload + (Math.random() - 0.5) * 18))
         const download = Math.max(10, Math.min(95, prev.download + (Math.random() - 0.5) * 18))
+        const inBw = Math.max(5, Math.min(200, prev.inBw + (Math.random() - 0.5) * 30))
+        const outBw = Math.max(5, Math.min(200, prev.outBw + (Math.random() - 0.5) * 25))
         const overall = Math.max(10, Math.min(95, (cpu + ram + upload + download) / 4))
-        return { cpu, ram, upload, download, overall }
+        return { cpu, ram, upload, download, overall, inBw, outBw }
       })
     }, 1200)
     return () => clearInterval(interval)
   }, [selectedDevice?.id])
+
+  useEffect(() => {
+    if (isDeviceWidgetExiting) return
+    setVisibleDeviceSite((current) => {
+      if (current === selectedSite) return current
+      return selectedSite
+    })
+  }, [selectedSite, isDeviceWidgetExiting])
 
   const filteredDevices = devices.filter((device) => {
     const matchesSearch =
@@ -308,6 +324,11 @@ export default function DashboardPage() {
       setDisplayedDevice(device)
       setSelectedDevice(device)
       setFlyToLocation({ lat: device.lat, lng: device.lng })
+      pendingTopologySiteRef.current = null
+      if (topologyTimerRef.current) {
+        clearTimeout(topologyTimerRef.current)
+        topologyTimerRef.current = null
+      }
       return
     }
     setPendingDevice(device)
@@ -319,6 +340,11 @@ export default function DashboardPage() {
     if (!displayedDevice) {
       setDisplayedDevice(device)
       setSelectedDevice(device)
+      pendingTopologySiteRef.current = null
+      if (topologyTimerRef.current) {
+        clearTimeout(topologyTimerRef.current)
+        topologyTimerRef.current = null
+      }
       return
     }
     setPendingDevice(device)
@@ -349,59 +375,62 @@ export default function DashboardPage() {
     return 'server'
   }
 
-  const renderTopology = (filterId = 'glow', onNodeClick?: (device: Device) => void, forceTopology?: TopologyType) => {
-    const width = 380
-    const height = 220
-    const nodes = siteDevices.map((device, index) => ({ device, index }))
+const renderTopology = (filterId = 'glow', onNodeClick?: (device: Device) => void, forceTopology?: TopologyType, devicesList?: Device[], isManager = false) => {
+    const width = isManager ? 1689 : 380
+    const height = isManager ? 330 : 220
+    const contentScale = isManager ? 2.8 : 1.2
+    const linkScale = isManager ? 3.5 : 1
+    const nodes = (devicesList ?? siteDevices).map((device, index) => ({ device, index }))
     const effectiveTopology = forceTopology ?? topologyType
 
     const deviceIcon = (x: number, y: number, device: Device) => {
       const type = getDeviceType(device)
       const fill = SECURITY_SCORE_COLOR(device.security_score)
+      const s = contentScale
       if (type === 'switch') {
         return (
           <g key={device.id}>
-            <rect x={x - 10} y={y - 6} width="20" height="12" rx="2" fill={fill} filter={`url(#${filterId})`} />
-            <circle cx={x - 5} cy={y} r="1" fill="#0a0a0f" />
-            <circle cx={x} cy={y} r="1" fill="#0a0a0f" />
-            <circle cx={x + 5} cy={y} r="1" fill="#0a0a0f" />
+            <rect x={x - 10 * s} y={y - 6 * s} width={20 * s} height={12 * s} rx={2 * s} fill={fill} filter={`url(#${filterId})`} />
+            <circle cx={x - 5 * s} cy={y} r={1 * s} fill="#0a0a0f" />
+            <circle cx={x} cy={y} r={1 * s} fill="#0a0a0f" />
+            <circle cx={x + 5 * s} cy={y} r={1 * s} fill="#0a0a0f" />
           </g>
         )
       }
       if (type === 'router') {
         return (
           <g key={device.id}>
-            <rect x={x - 9} y={y - 5} width="18" height="10" rx="2" fill={fill} filter={`url(#${filterId})`} />
-            <path d={`M${x - 6},${y - 1} L${x - 3},${y - 3} M${x - 6},${y + 1} L${x - 3},${y + 3}`} stroke="#0a0a0f" strokeWidth="1" />
-            <path d={`M${x + 6},${y - 1} L${x + 3},${y - 3} M${x + 6},${y + 1} L${x + 3},${y + 3}`} stroke="#0a0a0f" strokeWidth="1" />
+            <rect x={x - 9 * s} y={y - 5 * s} width={18 * s} height={10 * s} rx={2 * s} fill={fill} filter={`url(#${filterId})`} />
+            <path d={`M${x - 6 * s},${y - 1 * s} L${x - 3 * s},${y - 3 * s} M${x - 6 * s},${y + 1 * s} L${x - 3 * s},${y + 3 * s}`} stroke="#0a0a0f" strokeWidth={1 * s} />
+            <path d={`M${x + 6 * s},${y - 1 * s} L${x + 3 * s},${y - 3 * s} M${x + 6 * s},${y + 1 * s} L${x + 3 * s},${y + 3 * s}`} stroke="#0a0a0f" strokeWidth={1 * s} />
           </g>
         )
       }
       if (type === 'firewall') {
         return (
           <g key={device.id}>
-            <path d={`M${x},${y - 8} L${x + 7},${y - 4} L${x + 7},${y + 4} L${x},${y + 8} L${x - 7},${y + 4} L${x - 7},${y - 4} Z`} fill={fill} filter={`url(#${filterId})`} />
-            <rect x={x - 3} y={y - 2} width="6" height="4" rx="1" fill="#0a0a0f" />
+            <path d={`M${x},${y - 8 * s} L${x + 7 * s},${y - 4 * s} L${x + 7 * s},${y + 4 * s} L${x},${y + 8 * s} L${x - 7 * s},${y + 4 * s} L${x - 7 * s},${y - 4 * s} Z`} fill={fill} filter={`url(#${filterId})`} />
+            <rect x={x - 3 * s} y={y - 2 * s} width={6 * s} height={4 * s} rx={1 * s} fill="#0a0a0f" />
           </g>
         )
       }
       if (type === 'ap') {
         return (
           <g key={device.id}>
-            <circle cx={x} cy={y} r="7" fill="none" stroke={fill} strokeWidth="1.5" filter={`url(#${filterId})`} />
-            <circle cx={x} cy={y} r="3" fill={fill} />
-            <path d={`M${x},${y - 10} Q${x},${y - 5} ${x},${y}`} stroke={fill} strokeWidth="1" fill="none" />
-            <path d={`M${x - 6},${y - 6} Q${x - 3},${y - 3} ${x},${y}`} stroke={fill} strokeWidth="1" fill="none" />
-            <path d={`M${x + 6},${y - 6} Q${x + 3},${y - 3} ${x},${y}`} stroke={fill} strokeWidth="1" fill="none" />
+            <circle cx={x} cy={y} r={7 * s} fill="none" stroke={fill} strokeWidth={1.5 * s} filter={`url(#${filterId})`} />
+            <circle cx={x} cy={y} r={3 * s} fill={fill} />
+            <path d={`M${x},${y - 10 * s} Q${x},${y - 5 * s} ${x},${y}`} stroke={fill} strokeWidth={1 * s} fill="none" />
+            <path d={`M${x - 6 * s},${y - 6 * s} Q${x - 3 * s},${y - 3 * s} ${x},${y}`} stroke={fill} strokeWidth={1 * s} fill="none" />
+            <path d={`M${x + 6 * s},${y - 6 * s} Q${x + 3 * s},${y - 3 * s} ${x},${y}`} stroke={fill} strokeWidth={1 * s} fill="none" />
           </g>
         )
       }
       return (
         <g key={device.id}>
-          <rect x={x - 8} y={y - 6} width="16" height="12" rx="2" fill={fill} filter={`url(#${filterId})`} />
-          <rect x={x - 5} y={y - 3} width="10" height="1" fill="#0a0a0f" />
-          <rect x={x - 5} y={y} width="10" height="1" fill="#0a0a0f" />
-          <circle cx={x + 4} cy={y + 3.5} r="1" fill="#0a0a0f" />
+          <rect x={x - 8 * s} y={y - 6 * s} width={16 * s} height={12 * s} rx={2 * s} fill={fill} filter={`url(#${filterId})`} />
+          <rect x={x - 5 * s} y={y - 3 * s} width={10 * s} height={1 * s} fill="#0a0a0f" />
+          <rect x={x - 5 * s} y={y} width={10 * s} height={1 * s} fill="#0a0a0f" />
+          <circle cx={x + 4 * s} cy={y + 3.5 * s} r={1 * s} fill="#0a0a0f" />
         </g>
       )
     }
@@ -409,11 +438,11 @@ export default function DashboardPage() {
     const commonNode = (x: number, y: number, device: Device) => (
       <g onClick={() => onNodeClick?.(device)} style={{ cursor: 'pointer' }}>
         {deviceIcon(x, y, device)}
-        <circle cx={x + 8} cy={y - 8} r="6" fill={SECURITY_SCORE_COLOR(device.security_score)} stroke="#0a0a0f" strokeWidth="1" />
-        <text x={x + 8} y={y - 7} textAnchor="middle" fill="#0a0a0f" fontSize="6" fontWeight="bold" style={{ fontFamily: 'var(--font-data)' }}>
+        <circle cx={x + 8 * contentScale} cy={y - 8 * contentScale} r={6 * contentScale} fill={SECURITY_SCORE_COLOR(device.security_score)} stroke="#0a0a0f" strokeWidth={1 * contentScale} />
+        <text x={x + 8 * contentScale} y={y - 7 * contentScale} textAnchor="middle" fill="#0a0a0f" fontSize={6 * contentScale} fontWeight="bold" style={{ fontFamily: 'var(--font-data)' }}>
           {device.security_score}
         </text>
-        <text x={x} y={y + 16} textAnchor="middle" fill="#9ca3af" fontSize="7" style={{ fontFamily: 'var(--font-data)' }}>
+        <text x={x} y={y + 16 * contentScale} textAnchor="middle" fill="#9ca3af" fontSize={7 * contentScale} style={{ fontFamily: 'var(--font-data)' }}>
           {device.hostname}
         </text>
       </g>
@@ -422,22 +451,31 @@ export default function DashboardPage() {
     if (effectiveTopology === 'star') {
       const cx = width / 2
       const cy = height / 2
-      const r = Math.min(width, height) / 2 - 28
+      const baseMargin = isManager ? 5 : 10
+      const spacingMultiplier = isManager ? 2.3 : 1
+      const margin = baseMargin * spacingMultiplier
+      const r = (Math.min(width, height) / 2 - margin) * spacingMultiplier
       return (
         <>
           {nodes.map(({ device }, idx) => {
             const angle = ((idx + 1) / (nodes.length + 1)) * Math.PI * 2 - Math.PI / 2
             const x = cx + r * Math.cos(angle)
             const y = cy + r * Math.sin(angle)
+            const midX = (cx + x) / 2
+            const midY = (cy + y) / 2
+            const intf = `Gi0/${idx}`
             return (
               <g key={device.id} onClick={() => onNodeClick?.(device)} style={{ cursor: 'pointer' }}>
-                <line x1={cx} y1={cy} x2={x} y2={y} stroke="rgba(0,212,255,0.15)" strokeWidth="1" />
+                <line x1={cx} y1={cy} x2={x} y2={y} stroke="rgba(0,212,255,0.15)" strokeWidth={1 * linkScale} />
+                <text x={midX} y={midY - 4} textAnchor="middle" fill="#00d4ff" fontSize={6 * contentScale} style={{ fontFamily: 'var(--font-data)' }}>
+                  {intf}
+                </text>
                 {commonNode(x, y, device)}
               </g>
             )
           })}
-          <circle cx={cx} cy={cy} r="9" fill="#00d4ff" filter={`url(#${filterId})`} />
-          <text x={cx} y={cy + 22} textAnchor="middle" fill="#9ca3af" fontSize="9" style={{ fontFamily: 'var(--font-data)' }}>
+          <circle cx={cx} cy={cy} r={9 * contentScale} fill="#00d4ff" filter={`url(#${filterId})`} />
+          <text x={cx} y={cy + 22} textAnchor="middle" fill="#9ca3af" fontSize={9 * contentScale} style={{ fontFamily: 'var(--font-data)' }}>
             CORE SWITCH
           </text>
         </>
@@ -446,21 +484,28 @@ export default function DashboardPage() {
 
     if (effectiveTopology === 'bus') {
       const busY = height / 2
-      const startX = 30
-      const endX = width - 30
+      const basePadding = 30
+      const spacingMultiplier = isManager ? 1.3 : 1
+      const padding = basePadding * spacingMultiplier
+      const startX = padding
+      const endX = width - padding
       return (
         <>
-          <line x1={startX} y1={busY} x2={endX} y2={busY} stroke="rgba(0,212,255,0.25)" strokeWidth="2" />
+          <line x1={startX} y1={busY} x2={endX} y2={busY} stroke="rgba(0,212,255,0.25)" strokeWidth={2 * linkScale} />
           {nodes.map(({ device }, idx) => {
-            const x = startX + ((idx + 1) / (nodes.length + 1)) * (endX - startX)
+            const x = startX + ((idx + 1) / (nodes.length + 1)) * (endX - startX) * spacingMultiplier
+            const intf = `Gi0/${idx}`
             return (
               <g key={device.id} onClick={() => onNodeClick?.(device)} style={{ cursor: 'pointer' }}>
-                <line x1={x} y1={busY} x2={x} y2={busY - 18} stroke="rgba(0,212,255,0.2)" strokeWidth="1" />
+                <line x1={x} y1={busY} x2={x} y2={busY - 18} stroke="rgba(0,212,255,0.2)" strokeWidth={1 * linkScale} />
+                <text x={x} y={busY - 22} textAnchor="middle" fill="#00d4ff" fontSize={6 * contentScale} style={{ fontFamily: 'var(--font-data)' }}>
+                  {intf}
+                </text>
                 {commonNode(x, busY - 24, device)}
               </g>
             )
           })}
-          <text x={width / 2} y={busY + 18} textAnchor="middle" fill="#9ca3af" fontSize="9" style={{ fontFamily: 'var(--font-data)' }}>
+          <text x={width / 2} y={busY + 18} textAnchor="middle" fill="#9ca3af" fontSize={9 * contentScale} style={{ fontFamily: 'var(--font-data)' }}>
             BACKBONE BUS
           </text>
         </>
@@ -470,7 +515,10 @@ export default function DashboardPage() {
     if (effectiveTopology === 'ring') {
       const cx = width / 2
       const cy = height / 2
-      const r = Math.min(width, height) / 2 - 28
+      const baseMargin = isManager ? 5 : 10
+      const spacingMultiplier = isManager ? 2.3 : 1
+      const margin = baseMargin * spacingMultiplier
+      const r = (Math.min(width, height) / 2 - margin) * spacingMultiplier
       const points = nodes.map(({ device }, idx) => {
         const angle = (idx / nodes.length) * Math.PI * 2 - Math.PI / 2
         return { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle), device }
@@ -480,15 +528,25 @@ export default function DashboardPage() {
           <polyline
             points={points.map((p) => `${p.x},${p.y}`).join(' ')}
             stroke="rgba(0,212,255,0.25)"
-            strokeWidth="1.5"
+strokeWidth={1.5 * linkScale}
             fill="none"
           />
-          {points.map((p) => (
-            <g key={p.device.id} onClick={() => onNodeClick?.(p.device)} style={{ cursor: 'pointer' }}>
-              {commonNode(p.x, p.y, p.device)}
-            </g>
-          ))}
-          <text x={cx} y={cy + 18} textAnchor="middle" fill="#9ca3af" fontSize="9" style={{ fontFamily: 'var(--font-data)' }}>
+          {points.map((p, idx) => {
+            const nextIdx = (idx + 1) % points.length
+            const next = points[nextIdx]
+            const midX = (p.x + next.x) / 2
+            const midY = (p.y + next.y) / 2
+            const intf = `Gi0/${idx}`
+            return (
+              <g key={p.device.id} onClick={() => onNodeClick?.(p.device)} style={{ cursor: 'pointer' }}>
+                <text x={midX} y={midY - 4} textAnchor="middle" fill="#00d4ff" fontSize={6 * contentScale} style={{ fontFamily: 'var(--font-data)' }}>
+                  {intf}
+                </text>
+                {commonNode(p.x, p.y, p.device)}
+              </g>
+            )
+          })}
+          <text x={cx} y={cy + 18} textAnchor="middle" fill="#9ca3af" fontSize={9 * contentScale} style={{ fontFamily: 'var(--font-data)' }}>
             RING
           </text>
         </>
@@ -498,19 +556,26 @@ export default function DashboardPage() {
     if (effectiveTopology === 'mesh') {
       const cols = Math.ceil(Math.sqrt(nodes.length))
       const rows = Math.ceil(nodes.length / cols)
-      const cellW = width / (cols + 1)
-      const cellH = height / (rows + 1)
+      const spacingMultiplier = isManager ? 1.3 : 1
+      const margin = 30 * spacingMultiplier
+      const cellW = ((width - margin * 2) / (cols + 1)) * spacingMultiplier
+      const cellH = ((height - margin * 2) / (rows + 1)) * spacingMultiplier
       const points = nodes.map(({ device }, idx) => {
         const col = idx % cols
         const row = Math.floor(idx / cols)
-        return { x: cellW * (col + 1), y: cellH * (row + 1), device }
+        return { x: margin + cellW * (col + 1), y: margin + cellH * (row + 1), device }
       })
       return (
         <>
           {points.map((a, i) =>
             points.map((b, j) =>
               i < j ? (
-                <line key={`${i}-${j}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="rgba(0,212,255,0.1)" strokeWidth="1" />
+                <>
+                  <line key={`${i}-${j}`} x1={a.x} y1={a.y} x2={b.x} y2={b.y} stroke="rgba(0,212,255,0.1)" strokeWidth={1 * linkScale} />
+                  <text x={(a.x + b.x) / 2} y={(a.y + b.y) / 2 - 4} textAnchor="middle" fill="#00d4ff" fontSize={5 * contentScale} style={{ fontFamily: 'var(--font-data)' }}>
+                    Gi{i}/{j}
+                  </text>
+                </>
               ) : null
             )
           )}
@@ -519,7 +584,7 @@ export default function DashboardPage() {
               {commonNode(p.x, p.y, p.device)}
             </g>
           ))}
-          <text x={width / 2} y={height - 10} textAnchor="middle" fill="#9ca3af" fontSize="9" style={{ fontFamily: 'var(--font-data)' }}>
+          <text x={width / 2} y={height - 10} textAnchor="middle" fill="#9ca3af" fontSize={9 * contentScale} style={{ fontFamily: 'var(--font-data)' }}>
             MESH
           </text>
         </>
@@ -529,10 +594,12 @@ export default function DashboardPage() {
     if (effectiveTopology === 'tree') {
       const cx = width / 2
       const rootY = 24
-      const levelGap = 56
+      const levelGap = isManager ? 56 * 1.5 : 56
       const levelYs = [rootY, rootY + levelGap, rootY + levelGap * 2]
-      const padding = 32
-      const usableWidth = width - padding * 2
+      const basePadding = 32
+      const widthMultiplier = isManager ? 1.3 : 1
+      const padding = basePadding * widthMultiplier
+      const usableWidth = (width - padding * 2) * widthMultiplier
 
       const rootCount = 1
       const remaining = nodes.length - rootCount
@@ -579,38 +646,43 @@ export default function DashboardPage() {
 
       const parentIcon = (x: number, y: number) => (
         <g>
-          <rect x={x - 10} y={y - 8} width="20" height="16" rx="2" fill="#f59e0b" filter={`url(#${filterId})`} />
-          <rect x={x - 5} y={y - 4} width="10" height="1" fill="#0a0a0f" />
-          <rect x={x - 5} y={y} width="10" height="1" fill="#0a0a0f" />
-          <circle cx={x + 3} cy={y + 4} r="1" fill="#0a0a0f" />
+          <rect x={x - 10 * contentScale} y={y - 8 * contentScale} width={20 * contentScale} height={16 * contentScale} rx={2 * contentScale} fill="#f59e0b" filter={`url(#${filterId})`} />
+          <rect x={x - 5 * contentScale} y={y - 4 * contentScale} width={10 * contentScale} height={1 * contentScale} fill="#0a0a0f" />
+          <rect x={x - 5 * contentScale} y={y} width={10 * contentScale} height={1 * contentScale} fill="#0a0a0f" />
+          <circle cx={x + 3 * contentScale} cy={y + 4 * contentScale} r={1 * contentScale} fill="#0a0a0f" />
         </g>
       )
 
       const level1Icon = (x: number, y: number) => (
         <g>
-          <rect x={x - 9} y={y - 6} width="18" height="12" rx="2" fill="#3b82f6" filter={`url(#${filterId})`} />
-          <circle cx={x - 4} cy={y} r="1" fill="#0a0a0f" />
-          <circle cx={x + 1} cy={y} r="1" fill="#0a0a0f" />
+          <rect x={x - 9 * contentScale} y={y - 6 * contentScale} width={18 * contentScale} height={12 * contentScale} rx={2 * contentScale} fill="#3b82f6" filter={`url(#${filterId})`} />
+          <circle cx={x - 4 * contentScale} cy={y} r={1 * contentScale} fill="#0a0a0f" />
+          <circle cx={x + 1 * contentScale} cy={y} r={1 * contentScale} fill="#0a0a0f" />
         </g>
       )
 
       const level2Icon = (x: number, y: number) => (
         <g>
-          <rect x={x - 9} y={y - 6} width="18" height="12" rx="2" fill="#22c55e" filter={`url(#${filterId})`} />
-          <circle cx={x - 4} cy={y} r="1" fill="#0a0a0f" />
-          <circle cx={x + 1} cy={y} r="1" fill="#0a0a0f" />
+          <rect x={x - 9 * contentScale} y={y - 6 * contentScale} width={18 * contentScale} height={12 * contentScale} rx={2 * contentScale} fill="#22c55e" filter={`url(#${filterId})`} />
+          <circle cx={x - 4 * contentScale} cy={y} r={1 * contentScale} fill="#0a0a0f" />
+          <circle cx={x + 1 * contentScale} cy={y} r={1 * contentScale} fill="#0a0a0f" />
         </g>
       )
 
       return (
         <>
           {links.map((link, idx) => (
-            <line key={idx} x1={link.x1} y1={link.y1} x2={link.x2} y2={link.y2} stroke="rgba(0,212,255,0.35)" strokeWidth="1.5" />
+            <>
+              <line key={idx} x1={link.x1} y1={link.y1} x2={link.x2} y2={link.y2} stroke="rgba(0,212,255,0.35)" strokeWidth={1.5 * linkScale} />
+              <text x={(link.x1 + link.x2) / 2} y={(link.y1 + link.y2) / 2 - 4} textAnchor="middle" fill="#00d4ff" fontSize={6 * contentScale} style={{ fontFamily: 'var(--font-data)' }}>
+                Gi0/{idx}
+              </text>
+            </>
           ))}
           {branchNodes.map((p) => (
             <g key={`branch-${p.device.id}`} onClick={() => onNodeClick?.(p.device)} style={{ cursor: 'pointer' }}>
               {level1Icon(p.x, p.y)}
-              <text x={p.x} y={p.y + 16} textAnchor="middle" fill="#9ca3af" fontSize="7" style={{ fontFamily: 'var(--font-data)' }}>
+              <text x={p.x} y={p.y + 16 * contentScale} textAnchor="middle" fill="#9ca3af" fontSize={7 * contentScale} style={{ fontFamily: 'var(--font-data)' }}>
                 {p.device.hostname}
               </text>
             </g>
@@ -618,7 +690,7 @@ export default function DashboardPage() {
           {leafNodes.map((p) => (
             <g key={`leaf-${p.device.id}`} onClick={() => onNodeClick?.(p.device)} style={{ cursor: 'pointer' }}>
               {level2Icon(p.x, p.y)}
-              <text x={p.x} y={p.y + 16} textAnchor="middle" fill="#9ca3af" fontSize="7" style={{ fontFamily: 'var(--font-data)' }}>
+              <text x={p.x} y={p.y + 16 * contentScale} textAnchor="middle" fill="#9ca3af" fontSize={7 * contentScale} style={{ fontFamily: 'var(--font-data)' }}>
                 {p.device.hostname}
               </text>
             </g>
@@ -626,18 +698,18 @@ export default function DashboardPage() {
           {rootNodes.map((p) => (
             <g key={`root-${p.device.id}`} onClick={() => onNodeClick?.(p.device)} style={{ cursor: 'pointer' }}>
               {parentIcon(p.x, p.y)}
-              <text x={p.x} y={p.y + 16} textAnchor="middle" fill="#9ca3af" fontSize="7" style={{ fontFamily: 'var(--font-data)' }}>
+              <text x={p.x} y={p.y + 16 * contentScale} textAnchor="middle" fill="#9ca3af" fontSize={7 * contentScale} style={{ fontFamily: 'var(--font-data)' }}>
                 {p.device.hostname}
               </text>
             </g>
           ))}
-          <text x={cx} y={levelYs[0] - 16} textAnchor="middle" fill="#f59e0b" fontSize="9" fontWeight="bold" style={{ fontFamily: 'var(--font-data)' }}>
+          <text x={cx} y={levelYs[0] - 16} textAnchor="middle" fill="#f59e0b" fontSize={9 * contentScale} fontWeight="bold" style={{ fontFamily: 'var(--font-data)' }}>
             PARENT NODE
           </text>
-          <text x={padding - 8} y={levelYs[1] + 4} textAnchor="start" fill="#3b82f6" fontSize="9" fontWeight="bold" style={{ fontFamily: 'var(--font-data)' }}>
+          <text x={padding - 8} y={levelYs[1] + 4} textAnchor="start" fill="#3b82f6" fontSize={9 * contentScale} fontWeight="bold" style={{ fontFamily: 'var(--font-data)' }}>
             Level 1
           </text>
-          <text x={padding - 8} y={levelYs[2] + 4} textAnchor="start" fill="#22c55e" fontSize="9" fontWeight="bold" style={{ fontFamily: 'var(--font-data)' }}>
+          <text x={padding - 8} y={levelYs[2] + 4} textAnchor="start" fill="#22c55e" fontSize={9 * contentScale} fontWeight="bold" style={{ fontFamily: 'var(--font-data)' }}>
             Level 2
           </text>
         </>
@@ -647,7 +719,10 @@ export default function DashboardPage() {
     const hybridTopology = effectiveTopology === 'hybrid' ? 'star' : 'star'
     const cx = width / 2
     const cy = height / 2
-    const r = Math.min(width, height) / 2 - 28
+    const baseMargin = isManager ? 5 : 10
+    const spacingMultiplier = isManager ? 2.3 : 1
+    const margin = baseMargin * spacingMultiplier
+    const r = (Math.min(width, height) / 2 - margin) * spacingMultiplier
     const coreLinks = nodes.slice(0, Math.max(1, Math.floor(nodes.length / 2))).map(({ device }, idx) => {
       const angle = (idx / Math.max(1, Math.floor(nodes.length / 2))) * Math.PI * 2 - Math.PI / 2
       return { x: cx + r * Math.cos(angle), y: cy + r * Math.sin(angle), device }
@@ -658,25 +733,38 @@ export default function DashboardPage() {
     })
     return (
       <>
-        {coreLinks.map((p) => (
+        {coreLinks.map((p, idx) => (
           <g key={p.device.id} onClick={() => onNodeClick?.(p.device)} style={{ cursor: 'pointer' }}>
-            <line x1={cx} y1={cy} x2={p.x} y2={p.y} stroke="rgba(0,212,255,0.15)" strokeWidth="1" />
+            <line x1={cx} y1={cy} x2={p.x} y2={p.y} stroke="rgba(0,212,255,0.15)" strokeWidth={1 * linkScale} />
+            <text x={(cx + p.x) / 2} y={(cy + p.y) / 2 - 4} textAnchor="middle" fill="#00d4ff" fontSize={6 * contentScale} style={{ fontFamily: 'var(--font-data)' }}>
+              Gi0/{idx}
+            </text>
             {commonNode(p.x, p.y, p.device)}
           </g>
         ))}
         <polyline
           points={ringNodes.map((p) => `${p.x},${p.y}`).join(' ')}
           stroke="rgba(0,212,255,0.25)"
-          strokeWidth="1.5"
+          strokeWidth={1.5 * linkScale}
           fill="none"
         />
-        {ringNodes.map((p) => (
-          <g key={p.device.id} onClick={() => onNodeClick?.(p.device)} style={{ cursor: 'pointer' }}>
-            {commonNode(p.x, p.y, p.device)}
-          </g>
-        ))}
-        <circle cx={cx} cy={cy} r="9" fill="#00d4ff" filter={`url(#${filterId})`} />
-        <text x={cx} y={cy + 22} textAnchor="middle" fill="#9ca3af" fontSize="9" style={{ fontFamily: 'var(--font-data)' }}>
+        {ringNodes.map((p, idx) => {
+          const nextIdx = (idx + 1) % ringNodes.length
+          const next = ringNodes[nextIdx]
+          const midX = (p.x + next.x) / 2
+          const midY = (p.y + next.y) / 2
+          const intf = `Gi1/${idx}`
+          return (
+            <g key={p.device.id} onClick={() => onNodeClick?.(p.device)} style={{ cursor: 'pointer' }}>
+              <text x={midX} y={midY - 4} textAnchor="middle" fill="#00d4ff" fontSize={6 * contentScale} style={{ fontFamily: 'var(--font-data)' }}>
+                {intf}
+              </text>
+              {commonNode(p.x, p.y, p.device)}
+            </g>
+          )
+        })}
+        <circle cx={cx} cy={cy} r={9 * contentScale} fill="#00d4ff" filter={`url(#${filterId})`} />
+        <text x={cx} y={cy + 22} textAnchor="middle" fill="#9ca3af" fontSize={9 * contentScale} style={{ fontFamily: 'var(--font-data)' }}>
           HYBRID
         </text>
       </>
@@ -699,6 +787,38 @@ export default function DashboardPage() {
       return [...prev.filter((k) => !RIGHT_WIDGET_KEYS.includes(k)), key]
     })
   }
+
+  const handleFlyToComplete = useCallback(() => {
+    const site = pendingTopologySiteRef.current
+    if (!site) return
+
+    if (topologyTimerRef.current) {
+      clearTimeout(topologyTimerRef.current)
+    }
+    topologyTimerRef.current = setTimeout(() => {
+      setSelectedSite(site)
+      setGlobeTopologySite(site)
+      setVisibleDeviceSite(site)
+      pendingTopologySiteRef.current = null
+      topologyTimerRef.current = null
+    }, 1000)
+  }, [])
+
+  const switchSite = useCallback((newSite: string) => {
+    setIsTopologyExiting(true)
+    setIsDeviceWidgetExiting(true)
+
+    setTimeout(() => {
+      setSelectedSiteForTopology(newSite)
+      setSelectedSite(newSite)
+      setGlobeTopologySite(newSite)
+      setVisibleDeviceSite(newSite)
+      setSearchQuery('')
+      setStatusFilter('all')
+      setIsTopologyExiting(false)
+      setIsDeviceWidgetExiting(false)
+    }, 300)
+  }, [])
 
   const isActive = (key: WidgetKey) => activeWidgets.includes(key)
 
@@ -785,9 +905,30 @@ export default function DashboardPage() {
         <GlobeMap
           flyToLocation={flyToLocation}
           selectedDevice={selectedDevice}
-          selectedSite={selectedSite}
+          selectedSite={globeTopologySite}
           securityEvents={securityEvents}
           transitionSpeed="fast"
+          siteDevices={activeSite ? devices.filter((d) => d.site === activeSite) : []}
+          topologyType={topologyType as any}
+          onTopologyNodeClick={(device) => {
+            setDisplayedDevice(device)
+            setSelectedDevice(device)
+            setFlyToLocation({ lat: device.lat, lng: device.lng })
+          }}
+          onSiteDeselect={() => {
+            setSelectedSite(null)
+            setGlobeTopologySite(null)
+            setVisibleDeviceSite(null)
+            setIsDeviceWidgetExiting(false)
+            pendingTopologySiteRef.current = null
+            if (topologyTimerRef.current) {
+              clearTimeout(topologyTimerRef.current)
+              topologyTimerRef.current = null
+            }
+          }}
+          renderTopologyDialog={(filterId, onNodeClick, forceTopology) => renderTopology(filterId, onNodeClick, forceTopology, selectedSite ? devices.filter((d) => d.site === selectedSite) : undefined)}
+          onFlyToComplete={handleFlyToComplete}
+          isTopologyExiting={isTopologyExiting}
         />
 
         {isActive('dashboard') && (
@@ -796,11 +937,18 @@ export default function DashboardPage() {
               <NycPerformanceCard onLocationSelect={(coords) => {
                 setFlyToLocation(coords)
                 setSelectedSite(coords?.site ?? null)
+                pendingTopologySiteRef.current = coords?.site ?? null
+                setGlobeTopologySite(null)
+                if (topologyTimerRef.current) {
+                  clearTimeout(topologyTimerRef.current)
+                  topologyTimerRef.current = null
+                }
+                setVisibleDeviceSite(coords?.site ?? null)
               }} onOpenAddModal={() => setIsAddModalOpen(true)} />
-              {selectedSite && (
-                <div key={selectedSite} className="hud-panel rounded-lg p-4 w-[380px]">
+              {visibleDeviceSite && (
+                <div key={visibleDeviceSite} className={`hud-panel rounded-lg p-4 w-[380px] ${isDeviceWidgetExiting ? 'animate-slideOutRight' : ''}`}>
                   <div className="text-xs font-semibold text-cyan-300 mb-3" style={{ fontFamily: 'var(--font-data)' }}>
-                    DEVICES — {selectedSite}
+                    DEVICES — {visibleDeviceSite}
                   </div>
                   <div className="max-h-[220px] overflow-y-auto pr-1 performance-scroll">
                     {devicesLoading && (
@@ -818,7 +966,7 @@ export default function DashboardPage() {
                     )}
                     {!devicesLoading && !devicesError && (
                       <div className="flex flex-col gap-1">
-                        {devices.filter((device) => device.site === selectedSite).map((device) => {
+                        {devices.filter((device) => device.site === visibleDeviceSite).map((device) => {
                           const isSelected = selectedDevice?.id === device.id
                           return (
                             <button
@@ -867,7 +1015,7 @@ export default function DashboardPage() {
                             </button>
                           )
                         })}
-                        {devices.filter((device) => device.site === selectedSite).length === 0 && (
+                        {devices.filter((device) => device.site === visibleDeviceSite).length === 0 && (
                           <div className="text-xs text-gray-500" style={{ fontFamily: 'var(--font-data)' }}>
                             No matching devices.
                           </div>
@@ -905,35 +1053,31 @@ export default function DashboardPage() {
                    </span>
                  </div>
                  <div className="flex flex-col gap-2 mb-3">
-                   <div className="flex items-center justify-between gap-2">
-                     <button
-                       onClick={() => {
-                         const idx = sites.indexOf(activeSite)
-                         const prev = idx <= 0 ? sites[sites.length - 1] : sites[idx - 1]
-                         setSelectedSiteForTopology(prev)
-                         setSearchQuery('')
-                         setStatusFilter('all')
-                       }}
-                       className="flex h-8 w-8 items-center justify-center rounded border border-cyan-500/20 text-cyan-300 hover:bg-cyan-500/10"
-                     >
-                       ‹
-                     </button>
-                     <div className="flex-1 text-center text-xs text-gray-200" style={{ fontFamily: 'var(--font-data)' }}>
-                       {activeSite ?? 'SELECT DATACENTER'}
-                     </div>
-                     <button
-                       onClick={() => {
-                         const idx = sites.indexOf(activeSite)
-                         const next = idx >= sites.length - 1 ? sites[0] : sites[idx + 1]
-                         setSelectedSiteForTopology(next)
-                         setSearchQuery('')
-                         setStatusFilter('all')
-                       }}
-                       className="flex h-8 w-8 items-center justify-center rounded border border-cyan-500/20 text-cyan-300 hover:bg-cyan-500/10"
-                     >
-                       ›
-                     </button>
-                   </div>
+                    <div className="flex items-center justify-between gap-2">
+                      <button
+                        onClick={() => {
+                          const idx = sites.indexOf(activeSite)
+                          const prev = idx <= 0 ? sites[sites.length - 1] : sites[idx - 1]
+                          switchSite(prev)
+                        }}
+                        className="flex h-8 w-8 items-center justify-center rounded border border-cyan-500/20 text-cyan-300 hover:bg-cyan-500/10"
+                      >
+                        ‹
+                      </button>
+                      <div className="flex-1 text-center text-xs text-gray-200" style={{ fontFamily: 'var(--font-data)' }}>
+                        {activeSite ?? 'SELECT DATACENTER'}
+                      </div>
+                      <button
+                        onClick={() => {
+                          const idx = sites.indexOf(activeSite)
+                          const next = idx >= sites.length - 1 ? sites[0] : sites[idx + 1]
+                          switchSite(next)
+                        }}
+                        className="flex h-8 w-8 items-center justify-center rounded border border-cyan-500/20 text-cyan-300 hover:bg-cyan-500/10"
+                      >
+                        ›
+                      </button>
+                    </div>
                    <div className="flex items-center gap-2 text-[10px]" style={{ fontFamily: 'var(--font-data)' }}>
                      {(['all', 'online', 'warning', 'offline'] as const).map((status) => (
                        <button
@@ -950,8 +1094,8 @@ export default function DashboardPage() {
                      ))}
                    </div>
                  </div>
-                 <div className="relative w-full rounded border border-cyan-500/10 bg-black/20 overflow-hidden" style={{ height: 260 }}>
-                  <svg className="absolute inset-0 w-full h-full" viewBox="0 0 380 220" preserveAspectRatio="xMidYMid meet">
+<div className="relative w-full rounded border border-cyan-500/10 bg-black/20 overflow-hidden" style={{ height: 260 }}>
+                    <svg className="absolute inset-0 w-full h-full" viewBox="0 0 380 220" preserveAspectRatio="xMidYMid meet">
                      <defs>
                        <filter id="glow">
                          <feGaussianBlur stdDeviation="2.5" result="coloredBlur" />
@@ -985,209 +1129,408 @@ export default function DashboardPage() {
           </>
         )}
 
-         {displayedDevice && (
-           <div
-             key={displayedDevice.id}
-             className={`absolute right-4 top-24 z-30 w-80 ${isExiting ? 'animate-slideOutRight' : 'animate-slideInRight'}`}
-             onAnimationEnd={handleDeviceAnimationEnd}
-           >
-             <div className="hud-panel rounded-lg p-4" style={{ height: '50vh' }}>
-               <div className="flex items-center justify-between mb-3">
-                 <h3 className="text-sm font-bold text-cyan-400 tracking-wider">DEVICE DETAIL</h3>
-                 <button
-                   onClick={() => {
-                     setDisplayedDevice(null)
-                     setSelectedDevice(null)
-                     setPendingDevice(null)
-                     setIsExiting(false)
-                   }}
-                   className="text-[10px] text-gray-400 hover:text-white"
-                   style={{ fontFamily: 'var(--font-data)' }}
-                 >
-                   CLOSE
-                 </button>
-               </div>
-                   <div className="space-y-2 text-xs overflow-y-auto pr-2 performance-scroll" style={{ fontFamily: 'var(--font-data)', height: 'calc(50vh - 60px)', overflowY: 'scroll' }}>
-                     <div className="flex items-center justify-between">
-                       <span className="text-gray-500">HOSTNAME</span>
-                       <span className="text-gray-200">{displayedDevice.hostname}</span>
-                     </div>
-                     <div className="flex items-center justify-between">
-                       <span className="text-gray-500">IP</span>
-                       <span className="text-gray-200">{displayedDevice.ip}</span>
-                     </div>
-                     <div className="flex items-center justify-between">
-                       <span className="text-gray-500">VENDOR</span>
-                       <span className="text-gray-200">{displayedDevice.vendor}</span>
-                     </div>
-                     <div className="flex items-center justify-between">
-                       <span className="text-gray-500">MODEL</span>
-                       <span className="text-gray-200">{displayedDevice.model}</span>
-                     </div>
-                     <div className="flex items-center justify-between">
-                       <span className="text-gray-500">SITE</span>
-                       <span className="text-gray-200">{displayedDevice.site}</span>
-                     </div>
-                     <div className="flex items-center justify-between">
-                       <span className="text-gray-500">COORDINATES</span>
-                       <span className="text-gray-200">{displayedDevice.lat.toFixed(4)}, {displayedDevice.lng.toFixed(4)}</span>
-                     </div>
-                     <div className="flex items-center justify-between">
-                       <span className="text-gray-500">STATUS</span>
-                       <span
-                         className="font-semibold"
-                         style={{ color: STATUS_COLOR[displayedDevice.status] }}
-                       >
-                         {displayedDevice.status.toUpperCase()}
-                       </span>
-                     </div>
-                     <div className="mt-4 border-t border-cyan-500/10 pt-3">
-                       <div className="text-[10px] text-gray-500 mb-2" style={{ fontFamily: 'var(--font-data)' }}>
-                         SECURITY
-                       </div>
-                       <div className="space-y-2">
-                         <div className="flex items-center justify-between">
-                           <span className="text-gray-500">SECURITY SCORE</span>
-                           <span className="font-semibold" style={{ color: SECURITY_SCORE_COLOR(displayedDevice.security_score) }}>
-                             {displayedDevice.security_score}/100
-                           </span>
-                         </div>
-                         <div className="flex items-center justify-between">
-                           <span className="text-gray-500">COMPLIANCE</span>
-                           <span
-                             className="font-semibold"
-                             style={{ color: COMPLIANCE_COLOR[displayedDevice.compliance_status] }}
-                           >
-                             {displayedDevice.compliance_status.toUpperCase()}
-                           </span>
-                         </div>
-                         <div className="flex items-center justify-between">
-                           <span className="text-gray-500">SECURITY ZONE</span>
-                           <span className="text-gray-200">{displayedDevice.security_zone.toUpperCase()}</span>
-                         </div>
-                         <div className="flex items-center justify-between">
-                           <span className="text-gray-500">FIRMWARE</span>
-                           <span className="text-gray-200">{displayedDevice.firmware_version}</span>
-                         </div>
-                         <div className="flex items-center justify-between">
-                           <span className="text-gray-500">ACTIVE SESSIONS</span>
-                           <span className="text-gray-200">{displayedDevice.active_sessions}</span>
-                         </div>
-                         <div className="flex items-center justify-between">
-                           <span className="text-gray-500">FAILED LOGINS</span>
-                           <span className="text-gray-200">{displayedDevice.failed_logins}</span>
-                         </div>
-                       </div>
-                     </div>
-                    <div className="mt-4 border-t border-cyan-500/10 pt-3">
-                      <div className="text-[10px] text-gray-500 mb-2" style={{ fontFamily: 'var(--font-data)' }}>
-                        INTERFACES
+        {(displayedDevice || RIGHT_WIDGET_KEYS.some(key => isActive(key))) && (
+          <div className={`absolute right-4 top-24 z-30 grid gap-4 max-h-[calc(100vh-7rem)] ${displayedDevice ? 'grid-cols-[auto_22rem]' : 'grid-cols-1 justify-end'}`}>
+            {/* Column 1: Right Widgets */}
+            <div className="flex flex-col gap-4 overflow-y-auto pr-2 min-w-[22rem] animate-slideInRight transition-all duration-300">
+              {isActive('layers') && (
+                <div className="hud-panel rounded-lg p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-bold text-cyan-400 tracking-wider">LAYERS</h3>
+                    <button onClick={() => toggleWidget('layers')} className="text-[10px] text-gray-400 hover:text-white">CLOSE</button>
+                  </div>
+                  <div className="space-y-2">
+                    {['Devices', 'Arcs', 'Grid', 'Heatmap', 'Satellite'].map((layer) => (
+                      <label key={layer} className="flex items-center justify-between text-xs text-cyber-muted cursor-pointer">
+                        <span>{layer}</span>
+                        <input type="checkbox" defaultChecked className="accent-cyan-400" />
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {isActive('analytics') && (
+                <div className="hud-panel rounded-lg p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-bold text-cyan-400 tracking-wider">ANALYTICS</h3>
+                    <button onClick={() => toggleWidget('analytics')} className="text-[10px] text-gray-400 hover:text-white">CLOSE</button>
+                  </div>
+                  <div className="space-y-3">
+                    <div className="relative h-24 rounded border border-cyan-500/20 bg-black/20 overflow-hidden">
+                      <svg className="absolute inset-0 w-full h-full" viewBox="0 0 320 100" preserveAspectRatio="none">
+                        <polyline
+                          fill="none"
+                          stroke="#00ff9d"
+                          strokeWidth="1.5"
+                          points={waveformHistory.map((y, i) => `${(i / (waveformHistory.length - 1)) * 320},${y}`).join(' ')}
+                        />
+                      </svg>
+                      <div className="absolute top-2 left-2 text-[10px] text-cyan-300" style={{ fontFamily: 'var(--font-data)' }}>LIVE SIGNAL</div>
+                      <div className="absolute bottom-2 right-2 text-[10px] text-gray-400" style={{ fontFamily: 'var(--font-data)' }}>LIVE</div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {[
+                        { label: 'CPU', value: Math.round(analyticsMetrics.cpu), unit: '%', color: '#00ff9d' },
+                        { label: 'MEM', value: Math.round(analyticsMetrics.mem), unit: '%', color: '#00d4ff' },
+                        { label: 'TEMP', value: Math.round(analyticsMetrics.temp), unit: '°C', color: '#ff9f43' },
+                        { label: 'LAT', value: Math.round(analyticsMetrics.lat), unit: 'ms', color: '#ff4757' },
+                      ].map((metric) => (
+                        <div key={metric.label} className="rounded border border-cyan-500/20 p-2 text-center">
+                          <div className="text-[10px] text-gray-400 mb-1" style={{ fontFamily: 'var(--font-data)' }}>{metric.label}</div>
+                          <div className="text-sm font-bold" style={{ color: metric.color }}>{metric.value}{metric.unit}</div>
+                          <div className="mt-1 h-1 bg-cyan-500/10 rounded overflow-hidden">
+                            <div className="h-full rounded transition-all" style={{ width: `${Math.min(100, Math.max(0, metric.value))}%`, backgroundColor: metric.color }} />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <div className="rounded border border-cyan-500/20 p-2">
+                      <div className="text-[10px] text-gray-400 mb-2" style={{ fontFamily: 'var(--font-data)' }}>BANDWIDTH</div>
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-gray-500">IN</span>
+                        <span className="text-cyan-300" style={{ fontFamily: 'var(--font-data)' }}>{analyticsMetrics.inBw.toFixed(1)} MB/s</span>
                       </div>
-                      <div className="space-y-1">
-                        {['Gi0/0', 'Gi0/1', 'Gi0/2', 'Gi0/3'].map((iface) => (
-                          <div key={iface} className="flex items-center justify-between rounded border border-cyan-500/10 px-3 py-1.5">
-                            <span className="text-[10px] text-gray-300" style={{ fontFamily: 'var(--font-data)' }}>{iface}</span>
-                            <span className="text-[10px] text-green-400" style={{ fontFamily: 'var(--font-data)' }}>UP</span>
+                      <div className="flex items-center justify-between text-xs mt-1">
+                        <span className="text-gray-500">OUT</span>
+                        <span className="text-cyan-300" style={{ fontFamily: 'var(--font-data)' }}>{analyticsMetrics.outBw.toFixed(1)} MB/s</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {isActive('threats') && (
+                <div className="hud-panel rounded-lg p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-bold text-cyan-400 tracking-wider">THREATS</h3>
+                    <button onClick={() => toggleWidget('threats')} className="text-[10px] text-gray-400 hover:text-white">CLOSE</button>
+                  </div>
+                  <div className="flex items-center gap-2 mb-3">
+                    {(['all', 'critical', 'high', 'medium', 'low'] as const).map((severity) => (
+                      <button
+                        key={severity}
+                        onClick={() => setThreatSeverityFilter(severity)}
+                        className={`px-2 py-1 rounded border text-[10px] transition-colors ${
+                          threatSeverityFilter === severity
+                            ? 'border-cyan-400/60 text-cyan-300 bg-cyan-500/10'
+                            : 'border-cyan-500/10 text-gray-400 hover:text-white'
+                        }`}
+                        style={{ fontFamily: 'var(--font-data)' }}
+                      >
+                        {severity.toUpperCase()}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="max-h-[200px] overflow-y-auto space-y-2 pr-1 performance-scroll">
+                    {threatsLoading && (
+                      <div className="flex flex-col gap-2">
+                        {[1, 2, 3].map((i) => (
+                          <div key={i} className="flex items-center gap-3 animate-pulse">
+                            <div className="h-4 w-24 bg-cyan-500/10 rounded" />
+                            <div className="h-3 w-16 bg-cyan-500/10 rounded" />
                           </div>
                         ))}
                       </div>
-                    </div>
-                    <div className="mt-4 border-t border-cyan-500/10 pt-3">
-                      <div className="text-[10px] text-gray-500 mb-2" style={{ fontFamily: 'var(--font-data)' }}>
-                        VULNERABILITY SCANNER
-                      </div>
-                      <VulnerabilityScanner deviceId={displayedDevice.id} />
-                    </div>
+                    )}
+                    {threatsError && (
+                      <div className="text-xs text-red-400">Failed to load threats</div>
+                    )}
+                    {!threatsLoading && !threatsError && (
+                      <>
+                        {securityEvents
+                          .filter((event) => threatSeverityFilter === 'all' || event.severity === threatSeverityFilter)
+                          .map((event) => {
+                            const isAcknowledged = acknowledgedThreats.has(event.id)
+                            return (
+                              <div
+                                key={event.id}
+                                className={`flex items-start justify-between gap-3 rounded border px-3 py-2 transition-colors ${
+                                  isAcknowledged ? 'border-cyan-500/10 opacity-60' : 'border-cyan-500/20'
+                                }`}
+                              >
+                                <div className="flex-1 min-w-0">
+                                  <div className="flex items-center gap-2 mb-1">
+                                    <span
+                                      className="text-[10px] font-semibold px-2 py-0.5 rounded"
+                                      style={{
+                                        fontFamily: 'var(--font-data)',
+                                        backgroundColor: event.severity === 'critical' ? '#ff475720' : event.severity === 'high' ? '#ff9f4320' : event.severity === 'medium' ? '#f1c40f20' : '#00ff9d20',
+                                        color: event.severity === 'critical' ? '#ff4757' : event.severity === 'high' ? '#ff9f43' : event.severity === 'medium' ? '#f1c40f' : '#00ff9d',
+                                      }}
+                                    >
+                                      {event.severity.toUpperCase()}
+                                    </span>
+                                    <span className="text-[10px] text-gray-500" style={{ fontFamily: 'var(--font-data)' }}>
+                                      {new Date(event.timestamp).toLocaleTimeString()}
+                                    </span>
+                                  </div>
+                                  <div className="text-xs text-gray-200 mb-1" style={{ fontFamily: 'var(--font-data)' }}>
+                                    {event.description}
+                                  </div>
+                                  <div className="flex items-center gap-2 text-[10px] text-gray-500" style={{ fontFamily: 'var(--font-data)' }}>
+                                    <span>{event.device_id}</span>
+                                    {event.source_ip && <span>• {event.source_ip}</span>}
+                                  </div>
+                                </div>
+                                {!isAcknowledged && (
+                                  <button
+                                    onClick={() => setAcknowledgedThreats((prev) => new Set(prev).add(event.id))}
+                                    className="text-[10px] text-cyan-300 hover:text-white whitespace-nowrap"
+                                    style={{ fontFamily: 'var(--font-data)' }}
+                                  >
+                                    ACK
+                                  </button>
+                                )}
+                              </div>
+                            )
+                          })}
+                        {securityEvents.filter((event) => threatSeverityFilter === 'all' || event.severity === threatSeverityFilter).length === 0 && (
+                          <div className="text-xs text-gray-500 text-center py-4" style={{ fontFamily: 'var(--font-data)' }}>
+                            No threats found
+                          </div>
+                        )}
+                      </>
+                    )}
                   </div>
+                  <button
+                    onClick={() => setAcknowledgedThreats(new Set())}
+                    className="mt-3 w-full rounded border border-cyan-500/20 px-3 py-2 text-xs text-cyan-300 hover:bg-cyan-500/10"
+                    style={{ fontFamily: 'var(--font-data)' }}
+                  >
+                    CLEAR ACKNOWLEDGED
+                  </button>
                 </div>
-            </div>
-        )}
+              )}
 
-         {displayedDevice && (
-           <div
-             key={`perf-${displayedDevice.id}`}
-             className={`absolute right-4 z-30 w-80 ${isExiting ? 'animate-slideOutRight' : 'animate-slideInRight delay-150'}`}
-             style={{ top: 'calc(94px + 50vh + 16px)' }}
-             onAnimationEnd={handleDeviceAnimationEnd}
-           >
-             <div className="hud-panel rounded-lg p-4">
-               <div className="flex items-center justify-between mb-3">
-                 <h3 className="text-sm font-bold text-cyan-400 tracking-wider">DEVICE PERFORMANCE</h3>
-                 <button
-                   onClick={() => {}}
-                   className="text-[10px] text-gray-400 hover:text-white"
-                   style={{ fontFamily: 'var(--font-data)' }}
-                 >
-                   LIVE
-                 </button>
-               </div>
-              <div className="flex items-center gap-4">
-                <div className="flex-shrink-0">
-                  <svg width="60" height="60" viewBox="0 0 80 80">
-                    <circle cx="40" cy="40" r="32" fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="6" />
-                    <circle
-                      cx="40"
-                      cy="40"
-                      r="32"
-                      fill="none"
-                      stroke="#00d4ff"
-                      strokeWidth="6"
-                      strokeDasharray={`${(deviceHealth.overall / 100) * 201} 201`}
-                      transform="rotate(-90 40 40)"
-                      strokeLinecap="round"
-                    />
-                    <text x="40" y="40" textAnchor="middle" dy="0.35em" fill="#e8e6de" fontSize="16" fontWeight="700" fontFamily="var(--font-data)">
-                      {Math.round(deviceHealth.overall)}%
-                    </text>
-                  </svg>
-                </div>
-                <div className="flex-1 min-w-0">
-                  <div className="text-sm font-semibold text-gray-200 truncate" style={{ fontFamily: 'var(--font-data)' }}>
-                    {displayedDevice.hostname}
+              {isActive('live') && (
+                <div className="hud-panel rounded-lg p-4">
+                  <div className="flex items-center justify-between mb-3">
+                    <h3 className="text-sm font-bold text-cyan-400 tracking-wider">LIVE FEEDS</h3>
+                    <button onClick={() => toggleWidget('live')} className="text-[10px] text-gray-400 hover:text-white">CLOSE</button>
                   </div>
-                  <div className="text-[10px] text-gray-500" style={{ fontFamily: 'var(--font-data)' }}>
-                    {displayedDevice.site}
-                  </div>
-                  <div className="mt-3 space-y-2">
-                    <div>
-                      <div className="flex items-center justify-between text-[10px] mb-1" style={{ fontFamily: 'var(--font-data)' }}>
-                        <span className="text-gray-500">CPU</span>
-                        <span className="text-gray-300">{Math.round(deviceHealth.cpu)}%</span>
+                  <div className="space-y-2">
+                    {[
+                      'New device registered: nyc-dc-07',
+                      'Interface flapping: Gi0/1',
+                      'BGP peer down: 192.168.1.1',
+                      'CPU spike: 94% on router-02',
+                      'Backup completed successfully',
+                    ].map((item) => (
+                      <div key={item} className="rounded border border-cyan-500/10 px-3 py-2 text-xs text-cyber-muted">
+                        {item}
                       </div>
-                      <div className="h-1 bg-cyan-500/10 rounded overflow-hidden">
-                        <div className="h-full rounded bg-cyan-400 transition-all" style={{ width: `${deviceHealth.cpu}%` }} />
-                      </div>
-                    </div>
-                    <div>
-                      <div className="flex items-center justify-between text-[10px] mb-1" style={{ fontFamily: 'var(--font-data)' }}>
-                        <span className="text-gray-500">RAM</span>
-                        <span className="text-gray-300">{Math.round(deviceHealth.ram)}%</span>
-                      </div>
-                      <div className="h-1 bg-cyan-500/10 rounded overflow-hidden">
-                        <div className="h-full rounded bg-cyan-400 transition-all" style={{ width: `${deviceHealth.ram}%` }} />
-                      </div>
-                    </div>
-                    <div>
-                      <div className="flex items-center justify-between text-[10px] mb-1" style={{ fontFamily: 'var(--font-data)' }}>
-                        <span className="text-gray-500">UPLOAD</span>
-                        <span className="text-gray-300">{Math.round(deviceHealth.upload)}%</span>
-                      </div>
-                      <div className="h-1 bg-cyan-500/10 rounded overflow-hidden">
-                        <div className="h-full rounded bg-cyan-400 transition-all" style={{ width: `${deviceHealth.upload}%` }} />
-                      </div>
-                    </div>
-                    <div>
-                      <div className="flex items-center justify-between text-[10px] mb-1" style={{ fontFamily: 'var(--font-data)' }}>
-                        <span className="text-gray-500">DOWNLOAD</span>
-                        <span className="text-gray-300">{Math.round(deviceHealth.download)}%</span>
-                      </div>
-                      <div className="h-1 bg-cyan-500/10 rounded overflow-hidden">
-                        <div className="h-full rounded bg-cyan-400 transition-all" style={{ width: `${deviceHealth.download}%` }} />
-                      </div>
-                    </div>
+                    ))}
                   </div>
                 </div>
-              </div>
+              )}
+
+              {isActive('security') && (
+                <div className="hud-panel rounded-lg p-4">
+                  <SecurityDashboard onClose={() => toggleWidget('security')} />
+                </div>
+              )}
+            </div>
+
+            {/* Column 2: Device Panels */}
+            <div className="flex flex-col gap-4">
+              {displayedDevice && (
+                <div
+                  key={displayedDevice.id}
+                  className={`${isExiting ? 'animate-slideOutRight' : 'animate-slideInRight'}`}
+                  onAnimationEnd={handleDeviceAnimationEnd}
+                >
+                  <div className="hud-panel rounded-lg p-4" style={{ height: '45vh' }}>
+                    <div className="flex items-center justify-between mb-3">
+                      <h3 className="text-sm font-bold text-cyan-400 tracking-wider">DEVICE DETAIL</h3>
+                      <button
+                        onClick={() => {
+                          setDisplayedDevice(null)
+                          setSelectedDevice(null)
+                          setPendingDevice(null)
+                          setIsExiting(false)
+                        }}
+                        className="text-[10px] text-gray-400 hover:text-white"
+                        style={{ fontFamily: 'var(--font-data)' }}
+                      >
+                        CLOSE
+                      </button>
+                    </div>
+                    <div className="space-y-2 text-xs overflow-y-auto pr-2 performance-scroll" style={{ fontFamily: 'var(--font-data)', height: 'calc(45vh - 60px)', overflowY: 'scroll' }}>
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-500">HOSTNAME</span>
+                        <span className="text-gray-200">{displayedDevice.hostname}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-500">IP</span>
+                        <span className="text-gray-200">{displayedDevice.ip}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-500">VENDOR</span>
+                        <span className="text-gray-200">{displayedDevice.vendor}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-500">MODEL</span>
+                        <span className="text-gray-200">{displayedDevice.model}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-500">SITE</span>
+                        <span className="text-gray-200">{displayedDevice.site}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-500">COORDINATES</span>
+                        <span className="text-gray-200">{displayedDevice.lat.toFixed(4)}, {displayedDevice.lng.toFixed(4)}</span>
+                      </div>
+                      <div className="flex items-center justify-between">
+                        <span className="text-gray-500">STATUS</span>
+                        <span
+                          className="font-semibold"
+                          style={{ color: STATUS_COLOR[displayedDevice.status] }}
+                        >
+                          {displayedDevice.status.toUpperCase()}
+                        </span>
+                      </div>
+                      <div className="mt-4 border-t border-cyan-500/10 pt-3">
+                        <div className="text-[10px] text-gray-500 mb-2" style={{ fontFamily: 'var(--font-data)' }}>
+                          SECURITY
+                        </div>
+                        <div className="space-y-2">
+                          <div className="flex items-center justify-between">
+                            <span className="text-gray-500">SECURITY SCORE</span>
+                            <span className="font-semibold" style={{ color: SECURITY_SCORE_COLOR(displayedDevice.security_score) }}>
+                              {displayedDevice.security_score}/100
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-gray-500">COMPLIANCE</span>
+                            <span
+                              className="font-semibold"
+                              style={{ color: COMPLIANCE_COLOR[displayedDevice.compliance_status] }}
+                            >
+                              {displayedDevice.compliance_status.toUpperCase()}
+                            </span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-gray-500">SECURITY ZONE</span>
+                            <span className="text-gray-200">{displayedDevice.security_zone.toUpperCase()}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-gray-500">FIRMWARE</span>
+                            <span className="text-gray-200">{displayedDevice.firmware_version}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-gray-500">ACTIVE SESSIONS</span>
+                            <span className="text-gray-200">{displayedDevice.active_sessions}</span>
+                          </div>
+                          <div className="flex items-center justify-between">
+                            <span className="text-gray-500">FAILED LOGINS</span>
+                            <span className="text-gray-200">{displayedDevice.failed_logins}</span>
+                          </div>
+                        </div>
+                      </div>
+                      <div className="mt-4 border-t border-cyan-500/10 pt-3">
+                        <div className="text-[10px] text-gray-500 mb-2" style={{ fontFamily: 'var(--font-data)' }}>
+                          INTERFACES
+                        </div>
+                        <div className="space-y-1">
+                          {['Gi0/0', 'Gi0/1', 'Gi0/2', 'Gi0/3'].map((iface) => (
+                            <div key={iface} className="flex items-center justify-between rounded border border-cyan-500/10 px-3 py-1.5">
+                              <span className="text-[10px] text-gray-300" style={{ fontFamily: 'var(--font-data)' }}>{iface}</span>
+                              <span className="text-[10px] text-green-400" style={{ fontFamily: 'var(--font-data)' }}>UP</span>
+                            </div>
+                          ))}
+                        </div>
+                      </div>
+                      <div className="mt-4 border-t border-cyan-500/10 pt-3">
+                        <div className="text-[10px] text-gray-500 mb-2" style={{ fontFamily: 'var(--font-data)' }}>
+                          VULNERABILITY SCANNER
+                        </div>
+                        <VulnerabilityScanner deviceId={displayedDevice.id} />
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {displayedDevice && (
+                <div
+                  key={`perf-${displayedDevice.id}`}
+                  className={`${isExiting ? 'animate-slideOutRight' : 'animate-slideInRight delay-150'}`}
+                  onAnimationEnd={handleDeviceAnimationEnd}
+                >
+                  <div className="hud-panel rounded-lg p-4">
+                    <div className="flex items-center justify-between mb-3">
+                      <h3 className="text-sm font-bold text-cyan-400 tracking-wider">DEVICE PERFORMANCE</h3>
+                      <button
+                        onClick={() => {}}
+                        className="text-[10px] text-gray-400 hover:text-white"
+                        style={{ fontFamily: 'var(--font-data)' }}
+                      >
+                        LIVE
+                      </button>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <div className="flex-shrink-0">
+                        <svg width="60" height="60" viewBox="0 0 80 80">
+                          <circle cx="40" cy="40" r="32" fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="6" />
+                          <circle
+                            cx="40"
+                            cy="40"
+                            r="32"
+                            fill="none"
+                            stroke="#00d4ff"
+                            strokeWidth="6"
+                            strokeDasharray={`${(deviceHealth.overall / 100) * 201} 201`}
+                            transform="rotate(-90 40 40)"
+                            strokeLinecap="round"
+                          />
+                          <text x="40" y="40" textAnchor="middle" dy="0.35em" fill="#e8e6de" fontSize="16" fontWeight="700" fontFamily="var(--font-data)">
+                            {Math.round(deviceHealth.overall)}%
+                          </text>
+                        </svg>
+                      </div>
+                      <div className="flex-1 space-y-2">
+                        <div>
+                          <div className="flex items-center justify-between text-[10px] text-gray-400 mb-1" style={{ fontFamily: 'var(--font-data)' }}>
+                            <span>CPU</span>
+                            <span>{Math.round(deviceHealth.cpu)}%</span>
+                          </div>
+                          <div className="h-1 bg-cyan-500/10 rounded overflow-hidden">
+                            <div className="h-full rounded transition-all" style={{ width: `${deviceHealth.cpu}%`, backgroundColor: '#00ff9d' }} />
+                          </div>
+                        </div>
+                        <div>
+                          <div className="flex items-center justify-between text-[10px] text-gray-400 mb-1" style={{ fontFamily: 'var(--font-data)' }}>
+                            <span>RAM</span>
+                            <span>{Math.round(deviceHealth.ram)}%</span>
+                          </div>
+                          <div className="h-1 bg-cyan-500/10 rounded overflow-hidden">
+                            <div className="h-full rounded transition-all" style={{ width: `${deviceHealth.ram}%`, backgroundColor: '#00d4ff' }} />
+                          </div>
+                        </div>
+                        <div>
+                          <div className="flex items-center justify-between text-[10px] text-gray-400 mb-1" style={{ fontFamily: 'var(--font-data)' }}>
+                            <span>UPLOAD</span>
+                            <span>{Math.round(deviceHealth.upload)}%</span>
+                          </div>
+                          <div className="h-1 bg-cyan-500/10 rounded overflow-hidden">
+                            <div className="h-full rounded transition-all" style={{ width: `${deviceHealth.upload}%`, backgroundColor: '#ff9f43' }} />
+                          </div>
+                        </div>
+                        <div>
+                          <div className="flex items-center justify-between text-[10px] text-gray-400 mb-1" style={{ fontFamily: 'var(--font-data)' }}>
+                            <span>DOWNLOAD</span>
+                            <span>{Math.round(deviceHealth.download)}%</span>
+                          </div>
+                          <div className="h-1 bg-cyan-500/10 rounded overflow-hidden">
+                            <div className="h-full rounded transition-all" style={{ width: `${deviceHealth.download}%`, backgroundColor: '#ff4757' }} />
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
             </div>
           </div>
         )}
@@ -1286,215 +1629,16 @@ export default function DashboardPage() {
           </div>
         )}
 
-        <div className={`absolute right-4 top-24 z-30 w-72 right-widget-panel ${isActive('layers') ? 'is-active' : ''}`}>
-          <div className="absolute -inset-4" onClick={() => toggleWidget('layers')} />
-          <div className="hud-panel rounded-lg p-4">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-bold text-cyan-400 tracking-wider">LAYERS</h3>
-              <button onClick={() => toggleWidget('layers')} className="text-[10px] text-gray-400 hover:text-white">CLOSE</button>
-            </div>
-            <div className="space-y-2">
-              {['Devices', 'Arcs', 'Grid', 'Heatmap', 'Satellite'].map((layer) => (
-                <label key={layer} className="flex items-center justify-between text-xs text-cyber-muted cursor-pointer">
-                  <span>{layer}</span>
-                  <input type="checkbox" defaultChecked className="accent-cyan-400" />
-                </label>
-              ))}
-            </div>
-          </div>
-        </div>
 
-        <div className={`absolute right-[1em] top-24 z-30 w-80 right-widget-panel ${isActive('analytics') ? 'is-active' : ''}`}>
-          <div className="absolute -inset-4" onClick={() => toggleWidget('analytics')} />
-          <div className="hud-panel rounded-lg p-4">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-bold text-cyan-400 tracking-wider">ANALYTICS</h3>
-              <button onClick={() => toggleWidget('analytics')} className="text-[10px] text-gray-400 hover:text-white">CLOSE</button>
-            </div>
-            <div className="space-y-3">
-              <div className="relative h-24 rounded border border-cyan-500/20 bg-black/20 overflow-hidden">
-                <svg className="absolute inset-0 w-full h-full" viewBox="0 0 320 100" preserveAspectRatio="none">
-                  <polyline
-                    fill="none"
-                    stroke="#00ff9d"
-                    strokeWidth="1.5"
-                    points={waveformHistory.map((y, i) => `${(i / (waveformHistory.length - 1)) * 320},${y}`).join(' ')}
-                  />
-                </svg>
-                <div className="absolute top-2 left-2 text-[10px] text-cyan-300" style={{ fontFamily: 'var(--font-data)' }}>LIVE SIGNAL</div>
-                <div className="absolute bottom-2 right-2 text-[10px] text-gray-400" style={{ fontFamily: 'var(--font-data)' }}>LIVE</div>
-              </div>
-              <div className="grid grid-cols-2 gap-2">
-                {[
-                  { label: 'CPU', value: Math.round(analyticsMetrics.cpu), unit: '%', color: '#00ff9d' },
-                  { label: 'MEM', value: Math.round(analyticsMetrics.mem), unit: '%', color: '#00d4ff' },
-                  { label: 'TEMP', value: Math.round(analyticsMetrics.temp), unit: '°C', color: '#ff9f43' },
-                  { label: 'LAT', value: Math.round(analyticsMetrics.lat), unit: 'ms', color: '#ff4757' },
-                ].map((metric) => (
-                  <div key={metric.label} className="rounded border border-cyan-500/20 p-2 text-center">
-                    <div className="text-[10px] text-gray-400 mb-1" style={{ fontFamily: 'var(--font-data)' }}>{metric.label}</div>
-                    <div className="text-sm font-bold" style={{ color: metric.color }}>{metric.value}{metric.unit}</div>
-                    <div className="mt-1 h-1 bg-cyan-500/10 rounded overflow-hidden">
-                      <div className="h-full rounded transition-all" style={{ width: `${Math.min(100, Math.max(0, metric.value))}%`, backgroundColor: metric.color }} />
-                    </div>
-                  </div>
-                ))}
-              </div>
-              <div className="rounded border border-cyan-500/20 p-2">
-                <div className="text-[10px] text-gray-400 mb-2" style={{ fontFamily: 'var(--font-data)' }}>BANDWIDTH</div>
-                <div className="flex items-center justify-between text-xs">
-                  <span className="text-gray-500">IN</span>
-                  <span className="text-cyan-300" style={{ fontFamily: 'var(--font-data)' }}>{analyticsMetrics.inBw.toFixed(1)} MB/s</span>
-                </div>
-                <div className="flex items-center justify-between text-xs mt-1">
-                  <span className="text-gray-500">OUT</span>
-                  <span className="text-cyan-300" style={{ fontFamily: 'var(--font-data)' }}>{analyticsMetrics.outBw.toFixed(1)} MB/s</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className={`absolute right-4 top-24 z-30 w-80 right-widget-panel ${isActive('threats') ? 'is-active' : ''}`}>
-          <div className="absolute -inset-4" onClick={() => toggleWidget('threats')} />
-          <div className="hud-panel rounded-lg p-4">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-bold text-cyan-400 tracking-wider">THREATS</h3>
-              <button onClick={() => toggleWidget('threats')} className="text-[10px] text-gray-400 hover:text-white">CLOSE</button>
-            </div>
-            <div className="flex items-center gap-2 mb-3">
-              {(['all', 'critical', 'high', 'medium', 'low'] as const).map((severity) => (
-                <button
-                  key={severity}
-                  onClick={() => setThreatSeverityFilter(severity)}
-                  className={`px-2 py-1 rounded border text-[10px] transition-colors ${
-                    threatSeverityFilter === severity
-                      ? 'border-cyan-400/60 text-cyan-300 bg-cyan-500/10'
-                      : 'border-cyan-500/10 text-gray-400 hover:text-white'
-                  }`}
-                  style={{ fontFamily: 'var(--font-data)' }}
-                >
-                  {severity.toUpperCase()}
-                </button>
-              ))}
-            </div>
-            <div className="max-h-[200px] overflow-y-auto space-y-2 pr-1 performance-scroll">
-              {threatsLoading && (
-                <div className="flex flex-col gap-2">
-                  {[1, 2, 3].map((i) => (
-                    <div key={i} className="flex items-center gap-3 animate-pulse">
-                      <div className="h-4 w-24 bg-cyan-500/10 rounded" />
-                      <div className="h-3 w-16 bg-cyan-500/10 rounded" />
-                    </div>
-                  ))}
-                </div>
-              )}
-              {threatsError && (
-                <div className="text-xs text-red-400">Failed to load threats</div>
-              )}
-              {!threatsLoading && !threatsError && (
-                <>
-                  {securityEvents
-                    .filter((event) => threatSeverityFilter === 'all' || event.severity === threatSeverityFilter)
-                    .map((event) => {
-                      const isAcknowledged = acknowledgedThreats.has(event.id)
-                      return (
-                        <div
-                          key={event.id}
-                          className={`flex items-start justify-between gap-3 rounded border px-3 py-2 transition-colors ${
-                            isAcknowledged ? 'border-cyan-500/10 opacity-60' : 'border-cyan-500/20'
-                          }`}
-                        >
-                          <div className="flex-1 min-w-0">
-                            <div className="flex items-center gap-2 mb-1">
-                              <span
-                                className="text-[10px] font-semibold px-2 py-0.5 rounded"
-                                style={{
-                                  fontFamily: 'var(--font-data)',
-                                  backgroundColor: event.severity === 'critical' ? '#ff475720' : event.severity === 'high' ? '#ff9f4320' : event.severity === 'medium' ? '#f1c40f20' : '#00ff9d20',
-                                  color: event.severity === 'critical' ? '#ff4757' : event.severity === 'high' ? '#ff9f43' : event.severity === 'medium' ? '#f1c40f' : '#00ff9d',
-                                }}
-                              >
-                                {event.severity.toUpperCase()}
-                              </span>
-                              <span className="text-[10px] text-gray-500" style={{ fontFamily: 'var(--font-data)' }}>
-                                {new Date(event.timestamp).toLocaleTimeString()}
-                              </span>
-                            </div>
-                            <div className="text-xs text-gray-200 mb-1" style={{ fontFamily: 'var(--font-data)' }}>
-                              {event.description}
-                            </div>
-                            <div className="flex items-center gap-2 text-[10px] text-gray-500" style={{ fontFamily: 'var(--font-data)' }}>
-                              <span>{event.device_id}</span>
-                              {event.source_ip && <span>• {event.source_ip}</span>}
-                            </div>
-                          </div>
-                          {!isAcknowledged && (
-                            <button
-                              onClick={() => setAcknowledgedThreats((prev) => new Set(prev).add(event.id))}
-                              className="text-[10px] text-cyan-300 hover:text-white whitespace-nowrap"
-                              style={{ fontFamily: 'var(--font-data)' }}
-                            >
-                              ACK
-                            </button>
-                          )}
-                        </div>
-                      )
-                    })}
-                  {securityEvents.filter((event) => threatSeverityFilter === 'all' || event.severity === threatSeverityFilter).length === 0 && (
-                    <div className="text-xs text-gray-500 text-center py-4" style={{ fontFamily: 'var(--font-data)' }}>
-                      No threats found
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
-            <button
-              onClick={() => setAcknowledgedThreats(new Set())}
-              className="mt-3 w-full rounded border border-cyan-500/20 px-3 py-2 text-xs text-cyan-300 hover:bg-cyan-500/10"
-              style={{ fontFamily: 'var(--font-data)' }}
-            >
-              CLEAR ACKNOWLEDGED
-            </button>
-          </div>
-        </div>
-
-        <div className={`absolute right-4 top-24 z-30 w-80 right-widget-panel ${isActive('live') ? 'is-active' : ''}`}>
-          <div className="absolute -inset-4" onClick={() => toggleWidget('live')} />
-          <div className="hud-panel rounded-lg p-4">
-            <div className="flex items-center justify-between mb-3">
-              <h3 className="text-sm font-bold text-cyan-400 tracking-wider">LIVE FEEDS</h3>
-              <button onClick={() => toggleWidget('live')} className="text-[10px] text-gray-400 hover:text-white">CLOSE</button>
-            </div>
-            <div className="space-y-2">
-              {[
-                'New device registered: nyc-dc-07',
-                'Interface flapping: Gi0/1',
-                'BGP peer down: 192.168.1.1',
-                'CPU spike: 94% on router-02',
-                'Backup completed successfully',
-              ].map((item) => (
-                <div key={item} className="rounded border border-cyan-500/10 px-3 py-2 text-xs text-cyber-muted">
-                  {item}
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-
-        <div className={`absolute right-4 top-24 z-30 w-80 right-widget-panel ${isActive('security') ? 'is-active' : ''}`}>
-          <div className="absolute -inset-4" onClick={() => toggleWidget('security')} />
-          <SecurityDashboard onClose={() => toggleWidget('security')} />
-        </div>
       </main>
 
       {showNetworkModal && (
         <div className="fixed inset-0 z-[60] flex items-center justify-center">
           <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={() => setShowNetworkModal(false)} />
-          <div className="hud-panel border border-cyan-500/30 rounded-xl w-[90vw] max-w-6xl max-h-[85vh] relative flex flex-col">
+          <div className="hud-panel border border-cyan-500/30 rounded-xl w-[2000px] max-h-[85vh] flex flex-col">
             <div className="flex items-center justify-between mb-4 px-5 pt-5">
               <div>
-                <h2 className="text-sm font-bold text-cyan-300 tracking-wider">ORGANIZED NETWORK</h2>
+                <h2 className="text-sm font-bold text-cyan-300 tracking-wider">NETWORK MANAGER</h2>
               </div>
               <button
                 onClick={() => {
@@ -1507,7 +1651,7 @@ export default function DashboardPage() {
               </button>
             </div>
             <div className="flex flex-1 min-h-0">
-              <div className="w-[440px] border-r border-cyan-500/20 p-4 flex flex-col gap-3 overflow-y-auto">
+              <div className="w-[800px] border-r border-cyan-500/20 p-4 flex flex-col gap-3 overflow-y-auto">
                 <div className="hud-panel rounded-lg p-4">
                   <div className="flex flex-col gap-2 mb-3">
                     <div className="flex items-center justify-between gap-2">
@@ -1557,8 +1701,8 @@ export default function DashboardPage() {
                       ))}
                     </div>
                   </div>
-                  <div className="relative w-full rounded border border-cyan-500/10 bg-black/20 overflow-hidden" style={{ height: 260 }}>
-                   <svg className="absolute inset-0 w-full h-full" viewBox="0 0 380 220" preserveAspectRatio="xMidYMid meet">
+<div className="relative w-full rounded border border-cyan-500/10 bg-black/20 overflow-hidden" style={{ height: 550 }}>
+                    <svg className="absolute inset-0 w-full h-full" viewBox="0 0 1689 330" preserveAspectRatio="xMidYMid meet">
                       <defs>
                         <filter id="glow-modal">
                           <feGaussianBlur stdDeviation="2.5" result="coloredBlur" />
@@ -1573,10 +1717,77 @@ export default function DashboardPage() {
                           NO DEVICES FOR THIS SITE
                         </text>
                       ) : (
-                         renderTopology('glow-modal', setModalSelectedDevice)
+                         renderTopology('glow-modal', setModalSelectedDevice, undefined, undefined, true)
                       )}
                     </svg>
                   </div>
+                  {modalSelectedDevice && (
+                    <div className="hud-panel rounded-lg p-4 mt-4">
+                      <div className="flex items-center justify-between mb-3">
+                        <h3 className="text-sm font-bold text-cyan-300 tracking-wider">DEVICE PERFORMANCE</h3>
+                        <span className="text-[10px] text-gray-400" style={{ fontFamily: 'var(--font-data)' }}>LIVE</span>
+                      </div>
+                      <div className="flex items-center gap-4">
+                        <div className="flex-shrink-0">
+                          <svg width="60" height="60" viewBox="0 0 80 80">
+                            <circle cx="40" cy="40" r="32" fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="6" />
+                            <circle
+                              cx="40"
+                              cy="40"
+                              r="32"
+                              fill="none"
+                              stroke="#00d4ff"
+                              strokeWidth="6"
+                              strokeDasharray={`${(deviceHealth.overall / 100) * 201} 201`}
+                              transform="rotate(-90 40 40)"
+                              strokeLinecap="round"
+                            />
+                            <text x="40" y="40" textAnchor="middle" dy="0.35em" fill="#e8e6de" fontSize="16" fontWeight="700" fontFamily="var(--font-data)">
+                              {Math.round(deviceHealth.overall)}%
+                            </text>
+                          </svg>
+                        </div>
+                        <div className="flex-1 space-y-2">
+                          <div>
+                            <div className="flex items-center justify-between text-[10px] text-gray-400 mb-1" style={{ fontFamily: 'var(--font-data)' }}>
+                              <span>CPU</span>
+                              <span>{Math.round(deviceHealth.cpu)}%</span>
+                            </div>
+                            <div className="h-1 bg-cyan-500/10 rounded overflow-hidden">
+                              <div className="h-full rounded transition-all" style={{ width: `${deviceHealth.cpu}%`, backgroundColor: '#00ff9d' }} />
+                            </div>
+                          </div>
+                          <div>
+                            <div className="flex items-center justify-between text-[10px] text-gray-400 mb-1" style={{ fontFamily: 'var(--font-data)' }}>
+                              <span>RAM</span>
+                              <span>{Math.round(deviceHealth.ram)}%</span>
+                            </div>
+                            <div className="h-1 bg-cyan-500/10 rounded overflow-hidden">
+                              <div className="h-full rounded transition-all" style={{ width: `${deviceHealth.ram}%`, backgroundColor: '#00d4ff' }} />
+                            </div>
+                          </div>
+                          <div>
+                            <div className="flex items-center justify-between text-[10px] text-gray-400 mb-1" style={{ fontFamily: 'var(--font-data)' }}>
+                              <span>UPLOAD</span>
+                              <span>{(deviceHealth.inBw * 8).toFixed(0)} Mbit/s</span>
+                            </div>
+                            <div className="h-1 bg-cyan-500/10 rounded overflow-hidden">
+                              <div className="h-full rounded transition-all" style={{ width: `${deviceHealth.upload}%`, backgroundColor: '#ff9f43' }} />
+                            </div>
+                          </div>
+                          <div>
+                            <div className="flex items-center justify-between text-[10px] text-gray-400 mb-1" style={{ fontFamily: 'var(--font-data)' }}>
+                              <span>DOWNLOAD</span>
+                              <span>{(deviceHealth.outBw * 8).toFixed(0)} Mbit/s</span>
+                            </div>
+                            <div className="h-1 bg-cyan-500/10 rounded overflow-hidden">
+                              <div className="h-full rounded transition-all" style={{ width: `${deviceHealth.download}%`, backgroundColor: '#ff4757' }} />
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
                 </div>
               </div>
               <div className="flex-1 overflow-y-auto p-5">

@@ -25,6 +25,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8001';
 
 type BaseStyle = 'map' | 'sat';
 type ProjectionMode = 'globe' | 'mercator';
+type TopologyType = 'star' | 'bus' | 'ring' | 'mesh' | 'tree' | 'hybrid';
 
 interface Device {
   id: string;
@@ -217,6 +218,13 @@ interface GlobeMapProps {
   selectedSite?: string | null;
   securityEvents?: SecurityEvent[];
   transitionSpeed?: 'slow' | 'medium' | 'fast';
+  siteDevices?: Device[];
+  topologyType?: TopologyType;
+  onTopologyNodeClick?: (device: Device) => void;
+  onSiteDeselect?: () => void;
+  renderTopologyDialog?: (filterId: string, onNodeClick?: (device: Device) => void, forceTopology?: TopologyType) => React.ReactNode;
+  onFlyToComplete?: () => void;
+  isTopologyExiting?: boolean;
 }
 
 const TRANSITION_SPEEDS = {
@@ -234,6 +242,13 @@ export default function GlobeMap({
   selectedSite,
   securityEvents = [],
   transitionSpeed = 'medium',
+  siteDevices = [],
+  topologyType = 'star',
+  onTopologyNodeClick,
+  onSiteDeselect,
+  renderTopologyDialog,
+  onFlyToComplete,
+  isTopologyExiting = false,
   }: GlobeMapProps) {
   const mapRef = useRef<MapRef>(null);
   const [ready, setReady] = useState(false);
@@ -250,6 +265,8 @@ export default function GlobeMap({
   const [isInteracting, setIsInteracting] = useState(false);
   const pulseRef = useRef<number | null>(null);
   const speedConfig = TRANSITION_SPEEDS[transitionSpeed];
+  const [topologyLine, setTopologyLine] = useState<{ x1: number; y1: number; x2: number; y2: number } | null>(null);
+  const [dialogPosition, setDialogPosition] = useState<{ x: number; y: number } | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -258,7 +275,7 @@ export default function GlobeMap({
       .then((data) => {
         if (!cancelled) {
           const apiDevices = data.devices ?? [];
-          const merged = apiDevices.some((d) => d.id === HUB_DEVICE.id) ? apiDevices : [...apiDevices, HUB_DEVICE];
+           const merged = apiDevices.some((d: Device) => d.id === HUB_DEVICE.id) ? apiDevices : [...apiDevices, HUB_DEVICE];
           setDevices(merged);
         }
       })
@@ -310,11 +327,13 @@ export default function GlobeMap({
 
     const handleMoveEnd = () => {
       map.off('moveend', handleMoveEnd);
+      onFlyToComplete?.();
     };
 
     const handleFinalMoveEnd = () => {
       map.off('moveend', handleFinalMoveEnd);
       setIsFlying(false);
+      onFlyToComplete?.();
     };
 
     const resetAfterFallback = setTimeout(() => {
@@ -548,6 +567,75 @@ export default function GlobeMap({
     };
   }, [ready]);
 
+  useEffect(() => {
+    const map = mapRef.current?.getMap();
+    if (!map || !ready) {
+      setTopologyLine(null);
+      setDialogPosition(null);
+      return;
+    }
+
+    if (!selectedSite) {
+      setTopologyLine(null);
+      setDialogPosition(null);
+      return;
+    }
+
+    const updatePosition = () => {
+      const siteDevices = devices.filter((d) => d.site === selectedSite);
+      if (siteDevices.length === 0) {
+        setTopologyLine(null);
+        setDialogPosition(null);
+        return;
+      }
+
+      const avgLat = siteDevices.reduce((sum, d) => sum + d.lat, 0) / siteDevices.length;
+      const avgLng = siteDevices.reduce((sum, d) => sum + d.lng, 0) / siteDevices.length;
+
+      try {
+        const point = map.project([avgLng, avgLat]);
+        const container = map.getContainer();
+        const rect = container.getBoundingClientRect();
+        const dialogWidth = 380;
+        const dialogHeight = 320;
+        const spacing = 18;
+
+        let dialogX = point.x + spacing;
+        let dialogY = point.y - dialogHeight / 2;
+
+        if (dialogX + dialogWidth > rect.width - 12) {
+          dialogX = point.x - dialogWidth - spacing;
+        }
+        if (dialogY < 12) {
+          dialogY = 12;
+        } else if (dialogY + dialogHeight > rect.height - 12) {
+          dialogY = rect.height - dialogHeight - 12;
+        }
+
+        const anchorX = dialogX <= point.x ? dialogX + dialogWidth : dialogX;
+        const anchorY = dialogY + dialogHeight / 2;
+
+        setTopologyLine({
+          x1: point.x,
+          y1: point.y,
+          x2: anchorX,
+          y2: anchorY,
+        });
+        setDialogPosition({ x: dialogX, y: dialogY });
+      } catch {
+        // Keep the last known topology position instead of clearing it during transient map errors.
+      }
+    };
+
+    updatePosition();
+    map.on('move', updatePosition);
+    map.on('zoom', updatePosition);
+    return () => {
+      map.off('move', updatePosition);
+      map.off('zoom', updatePosition);
+    };
+  }, [ready, selectedSite, devices]);
+
   const scaleBar = computeScaleBar(view.zoom, view.lat);
   const onlineCount = devices.filter((d) => d.status === 'online').length;
 
@@ -610,21 +698,6 @@ export default function GlobeMap({
               }}
             />
           </Source>
-          <Source id="arcs" type="geojson" data={arcsToGeoJSON(devices)}>
-            <Layer
-              id="arcs-line"
-              type="line"
-              layout={{
-                'line-join': 'round',
-                'line-cap': 'round',
-              }}
-              paint={{
-                'line-color': '#00d4ff',
-                'line-width': 2,
-                'line-opacity': 0.8,
-              }}
-            />
-          </Source>
             {selectedDevice && (
               <Source id="selected-device" type="geojson" data={{
                 type: 'FeatureCollection',
@@ -672,6 +745,48 @@ export default function GlobeMap({
               </Source>
             )}
           </Map>
+
+          {topologyLine && (
+            <svg style={{ position: 'absolute', inset: 0, width: '100%', height: '100%', pointerEvents: 'none', zIndex: 20 }}>
+              <line
+                x1={topologyLine.x1}
+                y1={topologyLine.y1}
+                x2={topologyLine.x2}
+                y2={topologyLine.y2}
+                stroke="rgba(0, 212, 255, 0.6)"
+                strokeWidth="1.5"
+                strokeDasharray="6 4"
+              />
+              <circle cx={topologyLine.x2} cy={topologyLine.y2} r="4" fill="#00d4ff" opacity="0.9" />
+            </svg>
+          )}
+
+          {selectedSite && dialogPosition && renderTopologyDialog && (
+            <div style={{ position: 'absolute', left: dialogPosition.x, top: dialogPosition.y, zIndex: 30, width: 400 }} className={isTopologyExiting ? 'animate-slideOutRight' : 'animate-slideInRight'}>
+              <div className="hud-panel border border-cyan-500/40 rounded-lg shadow-[0_0_25px_rgba(0,212,255,0.12)]">
+                <div className="px-3 py-2 border-b border-cyan-500/10">
+                  <div className="text-[11px] font-bold text-cyan-300 tracking-wider">NETWORK TOPOLOGY</div>
+                  <div className="text-[9px] text-gray-400" style={{ fontFamily: 'var(--font-data)' }}>
+                    {selectedSite}
+                  </div>
+                </div>
+                <div className="p-2">
+                  <svg width="100%" height="220" viewBox="0 0 380 220" preserveAspectRatio="xMidYMid meet">
+                    <defs>
+                      <filter id="glow-dialog">
+                        <feGaussianBlur stdDeviation="2.5" result="coloredBlur" />
+                        <feMerge>
+                          <feMergeNode in="coloredBlur" />
+                          <feMergeNode in="SourceGraphic" />
+                        </feMerge>
+                      </filter>
+                    </defs>
+                    {renderTopologyDialog('glow-dialog', onTopologyNodeClick, topologyType)}
+                  </svg>
+                </div>
+              </div>
+            </div>
+          )}
 
         <div
           className="hud-panel"
