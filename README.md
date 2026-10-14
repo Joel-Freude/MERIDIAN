@@ -1,4 +1,4 @@
-# Network Device Inventory Manager
+# MERIDIAN - Network Device Inventory Manager
 
 An enterprise-grade, single-source-of-truth web application designed for Network Engineers and System Administrators to systematically track, monitor, and manage network hardware assets across corporate subnets[cite: 1].
 
