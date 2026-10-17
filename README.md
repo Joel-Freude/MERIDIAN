@@ -1,110 +1,140 @@
-# Network Device Inventory Manager
+# Meridian Microservices Monorepo
 
-An enterprise-grade, single-source-of-truth web application designed for Network Engineers and System Administrators to systematically track, monitor, and manage network hardware assets across corporate subnets[cite: 1].
+## Architecture Overview
 
-![License](https://img.shields.io/badge/license-MIT-blue.svg)
-![Python](https://img.shields.io/badge/Python-3.11%2B-blue)
-![FastAPI](https://img.shields.io/badge/FastAPI-0.111.0-009688)
-![Next.js](https://img.shields.io/badge/Next.js-16.3.5-black)
+```
+meridian/
+├── docker-compose.yml          # Full stack orchestration
+├── shared/
+│   ├── proto/                  # Protobuf definitions (gRPC contracts)
+│   ├── events/                 # JSON Schema for Kafka domain events
+│   └── types/                  # Generated TypeScript/Python types
+├── services/                   # 14 microservices
+│   ├── api-gateway/            # Kong API Gateway
+│   ├── device-registry/        # Core device CRUD
+│   ├── site-location/          # Sites, buildings, racks, geo
+│   ├── topology-engine/        # Graph layouts (stateless)
+│   ├── vulnerability-management/ # CVE tracking, scans
+│   ├── security-events/        # SIEM, threat detection
+│   ├── compliance-engine/      # Policy checks, audits
+│   ├── telemetry-metrics/      # Time-series metrics
+│   ├── config-management/      # Config backup/deploy/diff
+│   ├── discovery-reconciliation/ # SNMP/CDP/LLDP scanning
+│   ├── ipam-dhcp/              # Subnets, reservations, DNS
+│   ├── notification-alerting/  # Email, Slack, PagerDuty
+│   └── auth-rbac/              # SSO, API keys, RBAC
+├── frontend/                   # Next.js dashboard
+├── infra/                      # Terraform, Helm, k8s manifests
+└── docs/
+    └── architecture/
+```
 
----
+## Quick Start
 
-## Key Features
+```bash
+# 1. Copy env template
+cp .env.example .env
 
-* **Centralized Asset Management:** Full CRUD (Create, Read, Update, Delete) operations for network devices including Routers, Switches, Firewalls, Access Points, and Servers[cite: 1].
-* **Network Data Validation:** Built-in IPv4/IPv6 string validation and automatic MAC address normalization (`XX:XX:XX:XX:XX:XX`)[cite: 1].
-* **Relational Location Mapping:** Track device placement by sites, buildings, and specific server racks[cite: 1].
-* **Real-time Analytics Dashboard:** Live performance metrics with waveform visualization, CPU/MEM/TEMP/LAT monitoring, and bandwidth tracking.
-* **Interactive Network Topology:** Visual SVG-based topology widget with datacenter navigation, status filtering, and clickable device nodes.
-* **Organized Network Modal:** Split-view modal with network topology on the left and device details on the right, including Update, Delete, and New Device actions.
-* **Automated API Documentation:** Interactive OpenAPI/Swagger docs generated directly by FastAPI[cite: 1].
+# 2. Start infrastructure
+docker-compose up -d postgres redis kafka zookeeper
 
----
+# 3. Run migrations (after services implement them)
+docker-compose run --rm device-registry alembic upgrade head
 
-## Tech Stack & Architecture
+# 4. Start all services
+docker-compose up -d
 
-* **Frontend:** Next.js 16 (App Router), React 19, TypeScript, Tailwind CSS, Lucide Icons[cite: 1].
-* **Backend:** FastAPI, Pydantic v2, in-memory data store[cite: 1].
-* **Mapping:** MapLibre GL JS, deck.gl for 3D globe and arc visualization[cite: 1].
+# 5. Access dashboard
+open http://localhost:3000
+```
 
----
+## Service Ports (Local)
 
-## Data Model Overview
+| Service | Port | Description |
+|---------|------|-------------|
+| Frontend | 3000 | Next.js Dashboard |
+| API Gateway | 8000 | Kong Gateway |
+| Device Registry | 8001 | Core device CRUD |
+| Site/Location | 8002 | Sites, geo, racks |
+| Topology Engine | 8003 | Graph layouts |
+| Vulnerability Mgmt | 8004 | CVE, scans |
+| Security Events | 8005 | SIEM, threats |
+| Compliance Engine | 8006 | Policy, audits |
+| Telemetry Metrics | 8007 | Time-series |
+| Config Management | 8008 | Backup/deploy |
+| Discovery/Recon | 8009 | SNMP/CDP/LLDP |
+| IPAM/DHCP | 8010 | Subnets, DNS |
+| Notifications | 8011 | Email, Slack |
+| Auth/RBAC | 8012 | SSO, API keys |
 
-The application uses Pydantic models to represent network inventory data[cite: 1]:
+## Shared Contracts
 
-* **`Device`**: Stores `hostname`, `ip`, `vendor`, `model`, `site`, `lat`, `lng`, `status`, `security_score`, `compliance_status`, `firmware_version`, `security_zone`, and related telemetry[cite: 1].
-* **`Vulnerability`**: Stores `cve_id`, `severity`, `description`, `affected_device_id`, `discovered_date`, `remediation_status`[cite: 1].
-* **`SecurityEvent`**: Stores `event_type`, `severity`, `timestamp`, `description`, `source_ip`[cite: 1].
-* **`ScanProgress`**: Tracks vulnerability scan progress by `scan_id`[cite: 1].
+- **Protobuf**: `shared/proto/meridian.proto` — gRPC service definitions
+- **Events**: `shared/events/domain-events.json` — Kafka domain events (JSON Schema)
+- **Types**: Auto-generated via `buf generate` (Go/Python/TypeScript)
 
----
+## Development Workflow
 
-## Waterfall Development Lifecycle Status
+1. **Add a field** → Edit `shared/proto/meridian.proto`
+2. **Generate types** → `buf generate` (updates `shared/types/`)
+3. **Update service** → Implement new field in service code
+4. **Run tests** → `docker-compose run --rm <service> pytest`
+5. **Commit** → Types are versioned with proto
 
-This repository strictly adheres to a structured development methodology[cite: 1]:
+## Environment Variables
 
-- [x] **Phase 1: Requirements & SRS Specification** (Completed)[cite: 1]
-- [x] **Phase 2: System Design & Architecture** (Completed)[cite: 1]
-- [ ] **Phase 3: Implementation & Development** (In Progress)[cite: 1]
-- [ ] **Phase 4: Testing & Quality Assurance** (Pending)[cite: 1]
-- [ ] **Phase 5: Deployment & Release** (Pending)[cite: 1]
+Copy `.env.example` → `.env` and configure:
+- `POSTGRES_PASSWORD`
+- `JWT_SECRET`
+- `SMTP_*` (for notifications)
+- `LATLNG_API_KEY` (for geocoding)
 
----
+## Testing
 
-## Interface & Functional Updates
+```bash
+# Unit tests (per service)
+docker-compose run --rm device-registry pytest tests/
 
-### Analytics Widget
-- Live signal waveform visualization with real-time updates.
-- Dynamic CPU, Memory, Temperature, and Latency metrics with progress bars.
-- Bandwidth in/out monitoring with simulated live data.
+# Integration tests
+docker-compose -f docker-compose.yml -f docker-compose.test.yml up --abort-on-container-exit
 
-### Network Topology Widget
-- SVG-based topology visualization with support for Star, Bus, Ring, Mesh, Tree, and Hybrid layouts.
-- Datacenter navigation with arrow buttons.
-- Status filtering (All, Online, Warning, Offline).
-- Clickable device nodes that trigger selection.
+# Contract tests
+docker-compose run --rm contract-tests pytest tests/contracts/
+```
 
-### Organized Network Modal
-- Left panel: Full network topology widget with datacenter arrows, status filters, and clickable device icons.
-- Right panel: Selected device details including hostname, IP, vendor, model, site, coordinates, and status.
-- Action buttons: Update, Delete, and New Device.
-- Tree topology layout with Parent Node, Level 1, and Level 2 device tiers.
+## Deployment
 
----
+- **Local**: `docker-compose up -d`
+- **Kubernetes**: `helm install meridian ./infra/helm/meridian`
+- **Terraform**: `cd infra/terraform && terraform apply`
 
-## Getting Started (Local Development)
+## Service Template
 
-### Prerequisites
-* **Python 3.11+**
-* **Node.js 18+** and npm
+Each service follows this structure:
+```
+service-name/
+├── pyproject.toml          # Dependencies, build config
+├── Dockerfile              # Multi-stage build
+├── alembic/                # DB migrations (if applicable)
+├── app/
+│   ├── __init__.py
+│   ├── main.py             # FastAPI app entry
+│   ├── api/                # REST endpoints
+│   ├── models/             # SQLAlchemy/Pydantic models
+│   ├── services/           # Business logic
+│   ├── repositories/       # Data access
+│   └── events/             # Kafka producers/consumers
+├── tests/
+│   ├── unit/
+│   ├── integration/
+│   └── contracts/
+└── Dockerfile
+```
 
-### Installation
+## Key Principles
 
-1. Clone the repository:
-    ```bash
-    git clone https://github.com/Joel-Freude/Network-Device-Inventory-Manager.git
-    cd Network-Device-Inventory-Manager
-    ```
-
-2. Start the backend server:
-    ```bash
-    cd backend
-    pip install -r requirements.txt
-    uvicorn main:app --reload
-    ```
-
-3. In a new terminal, start the frontend development server:
-    ```bash
-    cd frontend
-    npm install
-    npm run dev
-    ```
-
-4. Access the application services:
-
-* Frontend Dashboard: http://localhost:3000
-* FastAPI Interactive Docs (Swagger): http://localhost:8000/docs
-
-4. License
-* **Distributed under the MIT License.** 
+1. **Database per service** — no shared tables
+2. **Async communication** — Kafka for domain events
+3. **Sync for queries** — gRPC/REST via API Gateway
+4. **Contract-first** — protobuf + JSON Schema before code
+5. **Observability** — OpenTelemetry, structured logging, health endpoints

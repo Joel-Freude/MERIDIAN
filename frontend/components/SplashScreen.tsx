@@ -33,7 +33,7 @@ export default function SplashScreen({ onComplete }: { onComplete: () => void })
         </div>
         <div className="text-center">
           <h1 className="text-2xl font-bold tracking-wider text-cyan-400 drop-shadow-[0_0_10px_rgba(0,212,255,0.5)] animate-pulse">
-            NDIM
+            MERIDIAN
           </h1>
           <p className="text-[10px] tracking-widest text-gray-400 mt-2 animate-pulse">
             NETWORK DEVICE INVENTORY MANAGER

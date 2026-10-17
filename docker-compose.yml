@@ -1,0 +1,31 @@
+services:
+  backend:
+    build: ./backend
+    container_name: meridian-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./backend:/app
+    networks:
+      - meridian-network
+
+  frontend:
+    build: ./frontend
+    container_name: meridian-frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:8000
+      - WATCHPACK_POLLING=true
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    depends_on:
+      - backend
+    networks:
+      - meridian-network
+
+networks:
+  meridian-network:
+    name: meridian-network

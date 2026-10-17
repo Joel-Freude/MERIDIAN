@@ -1,0 +1,237 @@
+syntax = "proto3";
+
+package meridian.shared;
+
+option go_package = "github.com/meridian/shared/proto;shared";
+option python_package = "meridian.shared.proto";
+
+// Base message for all service-to-service communication
+message ServiceMetadata {
+  string service_name = 1;
+  string trace_id = 2;
+  string span_id = 3;
+  int64 timestamp_ms = 4;
+}
+
+// Standard pagination
+message PageRequest {
+  int32 page = 1;
+  int32 page_size = 2;
+  string sort_by = 3;
+  bool sort_desc = 4;
+}
+
+message PageResponse {
+  int32 page = 1;
+  int32 page_size = 2;
+  int64 total = 3;
+  int32 total_pages = 4;
+}
+
+// Common filter
+message Filter {
+  string field = 1;
+  string operator = 2;  // eq, ne, gt, lt, gte, lte, like, in
+  string value = 3;
+}
+
+// Device-related messages
+message Device {
+  string id = 1;
+  string hostname = 2;
+  string ip_address = 3;
+  string mac_address = 4;
+  string device_type = 5;  // router, switch, firewall, ap, server
+  string vendor = 6;
+  string model = 7;
+  string serial_number = 8;
+  string firmware_version = 9;
+  string status = 10;  // online, warning, offline, maintenance, decommissioned
+  string site_id = 11;
+  string site_name = 12;
+  double latitude = 13;
+  double longitude = 14;
+  int32 security_score = 15;
+  string compliance_status = 16;  // compliant, non_compliant, pending
+  string security_zone = 17;  // trusted, dmz, untrusted
+  int32 active_sessions = 18;
+  int32 failed_logins = 19;
+  string last_config_change = 20;
+  string last_vulnerability_scan = 20;
+  string created_at = 22;
+  string updated_at = 23;
+}
+
+message DeviceListRequest {
+  PageRequest pagination = 1;
+  repeated Filter filters = 2;
+  string site_id = 3;
+  string status = 4;
+}
+
+message DeviceListResponse {
+  repeated Device devices = 1;
+  PageResponse pagination = 2;
+}
+
+// Location/Site messages
+message Site {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  string building = 4;
+  string rack = 5;
+  double latitude = 6;
+  double longitude = 7;
+  string timezone = 7;
+  string created_at = 8;
+  string updated_at = 8;
+}
+
+message SiteListRequest {
+  PageRequest pagination = 1;
+}
+
+message SiteListResponse {
+  repeated Site sites = 1;
+  PageResponse pagination = 2;
+}
+
+// Topology messages
+message TopologyNode {
+  string id = 1;
+  string device_id = 2;
+  string label = 3;
+  double x = 4;
+  double y = 5;
+  string node_type = 8;  // core, edge, leaf, spine
+  map<string, string> metadata = 9;
+}
+
+message TopologyLink {
+  string id = 1;
+  string source_id = 2;
+  string target_id = 3;
+  string interface_a = 4;
+  string interface_b = 5;
+  string link_type = 6;  // ethernet, fiber, wireless
+  double bandwidth_mbps = 7;
+  string status = 8;  // up, down, degraded
+}
+
+message TopologyGraph {
+  string site_id = 1;
+  string topology_type = 2;  // star, bus, ring, mesh, tree, hybrid
+  repeated TopologyNode nodes = 3;
+  repeated TopologyLink links = 4;
+  string computed_at = 5;
+}
+
+message TopologyRequest {
+  string site_id = 1;
+  string topology_type = 2;
+  bool force_recompute = 3;
+}
+
+// Vulnerability messages
+message Vulnerability {
+  string cve_id = 1;
+  string severity = 2;  // critical, high, medium, low
+  string description = 3;
+  string affected_device_id = 4;
+  string discovered_date = 5;
+  string remediation_status = 6;  // open, in_progress, resolved
+  string cvss_score = 7;
+  string cwe_id = 8;
+  string affected_package = 9;
+  string fixed_version = 10;
+}
+
+message ScanRequest {
+  string scan_id = 1;
+  string device_id = 2;
+  string site_id = 3;
+  string scan_type = 4;  // quick, full
+  string scanner_config = 5;
+}
+
+message ScanProgress {
+  string scan_id = 1;
+  string device_id = 2;
+  string site_id = 3;
+  string status = 4;  // queued, in_progress, completed, failed
+  int32 progress = 5;
+  string start_time = 6;
+  string end_time = 7;
+  int32 vulnerabilities_found = 8;
+  string scan_type = 9;
+}
+
+// Security event messages
+message SecurityEvent {
+  string id = 1;
+  string device_id = 2;
+  string event_type = 3;  // brute_force, port_scan, config_change, anomaly
+  string severity = 4;  // critical, high, medium, low
+  string timestamp = 5;
+  string description = 6;
+  string source_ip = 7;
+  bool acknowledged = 8;
+  string acknowledged_by = 9;
+  string acknowledged_at = 10;
+}
+
+// Compliance messages
+message CompliancePolicy {
+  string id = 1;
+  string name = 2;
+  string description = 3;
+  string rule_expression = 4;  // CEL expression
+  string severity = 5;
+  bool enabled = 6;
+}
+
+message ComplianceCheckResult {
+  string device_id = 1;
+  string policy_id = 2;
+  bool passed = 3;
+  string details = 4;
+  string checked_at = 5;
+}
+
+// Telemetry messages
+message MetricPoint {
+  string metric_name = 1;
+  double value = 2;
+  int64 timestamp_ms = 3;
+  map<string, string> labels = 4;
+}
+
+message MetricSeries {
+  string metric_name = 1;
+  repeated MetricPoint points = 2;
+  map<string, string> labels = 3;
+}
+
+// Event messages (for Kafka)
+message DomainEvent {
+  string event_id = 1;
+  string event_type = 2;  // DeviceCreated, DeviceUpdated, DeviceDeleted, ThreatDetected, ScanCompleted, etc.
+  string aggregate_id = 3;
+  string payload = 4;  // JSON serialized
+  int64 timestamp_ms = 5;
+  ServiceMetadata metadata = 6;
+}
+
+// Common responses
+message ErrorResponse {
+  string code = 1;
+  string message = 2;
+  map<string, string> details = 3;
+}
+
+message HealthResponse {
+  string status = 1;  // healthy, degraded, unhealthy
+  map<string, string> checks = 2;
+  int64 timestamp_ms = 3;
+}

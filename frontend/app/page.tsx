@@ -830,7 +830,7 @@ strokeWidth={1.5 * linkScale}
       <div className="fixed top-4 left-3 z-50 flex items-center gap-3">
         <div className="bg-transparent border border-cyan-500/30 rounded-lg px-4 py-2 backdrop-blur-sm">
           <h1 className="text-4xl font-bold tracking-wider text-cyan-400 drop-shadow-[0_0_10px_rgba(0,212,255,0.5)]">
-            NDIM
+            MERIDIAN
           </h1>
           <p className="text-[10px] tracking-widest text-gray-400 mt-0.5">
              NETWORK DEVICE INVENTORY MANAGER
