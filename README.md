@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 # Meridian Microservices Monorepo
+=======
+# MERIDIAN - Network Device Inventory Manager
+>>>>>>> b4f25f21acead483b02882303cc054126146fb9b
 
 ## Architecture Overview
 
